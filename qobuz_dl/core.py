@@ -2,6 +2,13 @@ import logging
 import os
 import sys
 
+if os.name == "nt":
+    OS_CONFIG = os.environ.get("APPDATA")
+else:
+    OS_CONFIG = os.path.join(os.environ["HOME"], ".config")
+
+CONFIG_FILE = os.path.join(OS_CONFIG, "qobuz-dl", "config.ini")
+
 import requests
 from bs4 import BeautifulSoup as bso
 from pathvalidate import sanitize_filename
@@ -80,8 +87,23 @@ class QobuzDL:
 
     def initialize_client_with_oauth(self, code, app_id, secrets, private_key):
         self.client = qopy.Client(None, None, app_id, secrets, skip_auth=True)
-        self.client.login_with_oauth_code(code, private_key)
+        usr_info = self.client.login_with_oauth_code(code, private_key)
+        self.oauth_user_id = usr_info.get("user", {}).get("id")
+        self.oauth_user_auth_token = usr_info.get("user_auth_token")
         logger.info(f"{YELLOW}Set max quality: {QUALITIES[int(self.quality)]}\n")
+
+    def save_oauth_token_to_config(self, config_file):
+        if not hasattr(self, 'oauth_user_auth_token') or not self.oauth_user_auth_token:
+            return
+        import configparser
+        config = configparser.ConfigParser()
+        config.read(config_file)
+        config["DEFAULT"]["user_auth_token"] = self.oauth_user_auth_token
+        if hasattr(self, 'oauth_user_id') and self.oauth_user_id:
+            config["DEFAULT"]["user_id"] = str(self.oauth_user_id)
+        with open(config_file, "w") as f:
+            config.write(f)
+        logger.info(f"{GREEN}OAuth token saved to config.ini")
 
     def get_tokens(self):
         bundle = Bundle()
@@ -283,6 +305,7 @@ class QobuzDL:
 
         self.initialize_client_with_oauth(code, self.app_id, self.secrets, self.private_key)
         logger.info(f"{GREEN}OAuth login successful!")
+        self.save_oauth_token_to_config(CONFIG_FILE)
 
     def lucky_mode(self, query, download=True):
         if len(query) < 3:
