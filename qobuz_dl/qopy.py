@@ -222,6 +222,41 @@ class Client:
         except InvalidAppSecretError:
             return False
 
+    def login_with_oauth_code(self, code, private_key):
+        # Step 1: Exchange code for token via /oauth/callback
+        callback_url = self.base + "oauth/callback"
+        params = {
+            "code": code,
+            "private_key": private_key,
+            "app_id": self.id,
+        }
+        r = self.session.get(callback_url, params=params)
+        r.raise_for_status()
+        json_resp = r.json()
+        token = json_resp.get("token")
+        if not token:
+            raise AuthenticationError("No token in OAuth callback response")
+
+        # Step 2: GET /user/login with X-User-Auth-Token to fetch full profile
+        self.uat = token
+        self.session.headers.update({"X-User-Auth-Token": self.uat})
+        login_url = self.base + "user/login"
+        r = self.session.post(
+            login_url,
+            headers={"Content-Type": "text/plain;charset=UTF-8"},
+            data="extra=partner"
+        )
+        if r.status_code == 401:
+            raise AuthenticationError("OAuth token rejected")
+        r.raise_for_status()
+        usr_info = r.json()
+        if not usr_info["user"]["credential"]["parameters"]:
+            raise IneligibleError("Free accounts are not eligible to download tracks.")
+        self.label = usr_info["user"]["credential"]["parameters"]["short_label"]
+        logger.info(f"{GREEN}Membership: {self.label}")
+        self.cfg_setup()
+        return usr_info
+
     def cfg_setup(self):
         for secret in self.secrets:
             # Falsy secrets

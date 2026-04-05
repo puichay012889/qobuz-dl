@@ -68,6 +68,7 @@ def _reset_config(config_file, use_token=False):
     bundle = Bundle()
     config["DEFAULT"]["app_id"] = str(bundle.get_app_id())
     config["DEFAULT"]["secrets"] = ",".join(bundle.get_secrets().values())
+    config["DEFAULT"]["private_key"] = bundle.get_private_key() or ""
     config["DEFAULT"]["folder_format"] = DEFAULT_FOLDER
     config["DEFAULT"]["track_format"] = DEFAULT_TRACK
     config["DEFAULT"]["smart_discography"] = "false"
@@ -98,6 +99,8 @@ def _handle_commands(qobuz, arguments):
             qobuz.lucky_type = arguments.type
             qobuz.lucky_limit = arguments.number
             qobuz.lucky_mode(query)
+        elif arguments.command == "oauth":
+            qobuz.handle_oauth_login(arguments.code)
         else:
             qobuz.interactive_limit = arguments.limit
             qobuz.interactive()
@@ -150,6 +153,7 @@ def main():
         secrets = [
             secret for secret in config["DEFAULT"]["secrets"].split(",") if secret
         ]
+        private_key = config["DEFAULT"].get("private_key", "")
         arguments = qobuz_dl_args(
             default_quality, default_limit, default_folder
         ).parse_args()
@@ -191,11 +195,25 @@ def main():
         track_format=arguments.track_format or track_format,
         smart_discography=arguments.smart_discography or smart_discography,
     )
-    
+
+    if arguments.command == "oauth":
+        if not app_id:
+            bundle = Bundle()
+            app_id = str(bundle.get_app_id())
+            secrets = [s for s in bundle.get_secrets().values() if s]
+            private_key = bundle.get_private_key() or ""
+        qobuz.app_id = app_id
+        qobuz.secrets = secrets
+        qobuz.private_key = private_key
+        qobuz.handle_oauth_login(arguments.code)
+        return
+
     if user_id and user_auth_token:
         qobuz.initialize_client_with_token(user_id, user_auth_token, app_id, secrets)
-    else:
+    elif email and password:
         qobuz.initialize_client(email, password, app_id, secrets)
+    else:
+        logger.error(f"{RED}No credentials found. Run 'qobuz-dl -r' to set up.")
 
     _handle_commands(qobuz, arguments)
 
