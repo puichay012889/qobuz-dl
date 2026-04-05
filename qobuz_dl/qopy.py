@@ -131,6 +131,26 @@ class Client:
         self.label = usr_info["user"]["credential"]["parameters"]["short_label"]
         logger.info(f"{GREEN}Membership: {self.label}")
 
+    def auth_with_token(self, user_id, user_auth_token):
+        params = {
+            "user_id": str(user_id),
+            "user_auth_token": user_auth_token,
+            "app_id": self.id,
+        }
+        r = self.session.get(self.base + "user/login", params=params)
+        if r.status_code == 401:
+            raise AuthenticationError("Invalid credentials.\n" + RESET)
+        elif r.status_code == 400:
+            raise InvalidAppIdError("Invalid app id.\n" + RESET)
+        r.raise_for_status()
+        usr_info = r.json()
+        if not usr_info["user"]["credential"]["parameters"]:
+            raise IneligibleError("Free accounts are not eligible to download tracks.")
+        self.uat = user_auth_token
+        self.session.headers.update({"X-User-Auth-Token": self.uat})
+        self.label = usr_info["user"]["credential"]["parameters"]["short_label"]
+        logger.info(f"{GREEN}Membership: {self.label}")
+
     def multi_meta(self, epoint, key, id, type):
         total = 1
         offset = 0

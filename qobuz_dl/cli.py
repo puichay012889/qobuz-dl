@@ -26,12 +26,24 @@ CONFIG_FILE = os.path.join(CONFIG_PATH, "config.ini")
 QOBUZ_DB = os.path.join(CONFIG_PATH, "qobuz_dl.db")
 
 
-def _reset_config(config_file):
+def _reset_config(config_file, use_token=False):
     logging.info(f"{YELLOW}Creating config file: {config_file}")
     config = configparser.ConfigParser()
-    config["DEFAULT"]["email"] = input("Enter your email:\n- ")
-    password = input("Enter your password\n- ")
-    config["DEFAULT"]["password"] = hashlib.md5(password.encode("utf-8")).hexdigest()
+    
+    if use_token:
+        user_id = input("Enter your Qobuz user_id (from web player localStorage):\n- ")
+        user_auth_token = input("Enter your Qobuz user_auth_token (from web player localStorage):\n- ")
+        config["DEFAULT"]["user_id"] = user_id
+        config["DEFAULT"]["user_auth_token"] = user_auth_token
+        config["DEFAULT"]["email"] = ""
+        config["DEFAULT"]["password"] = ""
+    else:
+        config["DEFAULT"]["email"] = input("Enter your email:\n- ")
+        password = input("Enter your password\n- ")
+        config["DEFAULT"]["password"] = hashlib.md5(password.encode("utf-8")).hexdigest()
+        config["DEFAULT"]["user_id"] = ""
+        config["DEFAULT"]["user_auth_token"] = ""
+    
     config["DEFAULT"]["default_folder"] = (
         input("Folder for downloads (leave empty for default 'Qobuz Downloads')\n- ")
         or "Qobuz Downloads"
@@ -116,8 +128,10 @@ def main():
     config.read(CONFIG_FILE)
 
     try:
-        email = config["DEFAULT"]["email"]
-        password = config["DEFAULT"]["password"]
+        email = config["DEFAULT"].get("email", "")
+        password = config["DEFAULT"].get("password", "")
+        user_id = config["DEFAULT"].get("user_id", "")
+        user_auth_token = config["DEFAULT"].get("user_auth_token", "")
         default_folder = config["DEFAULT"]["default_folder"]
         default_limit = config["DEFAULT"]["default_limit"]
         default_quality = config["DEFAULT"]["default_quality"]
@@ -177,7 +191,11 @@ def main():
         track_format=arguments.track_format or track_format,
         smart_discography=arguments.smart_discography or smart_discography,
     )
-    qobuz.initialize_client(email, password, app_id, secrets)
+    
+    if user_id and user_auth_token:
+        qobuz.initialize_client_with_token(user_id, user_auth_token, app_id, secrets)
+    else:
+        qobuz.initialize_client(email, password, app_id, secrets)
 
     _handle_commands(qobuz, arguments)
 

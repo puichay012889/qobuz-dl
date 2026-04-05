@@ -73,6 +73,11 @@ class QobuzDL:
         self.client = qopy.Client(email, pwd, app_id, secrets)
         logger.info(f"{YELLOW}Set max quality: {QUALITIES[int(self.quality)]}\n")
 
+    def initialize_client_with_token(self, user_id, user_auth_token, app_id, secrets):
+        self.client = qopy.Client(None, None, app_id, secrets)
+        self.client.auth_with_token(user_id, user_auth_token)
+        logger.info(f"{YELLOW}Set max quality: {QUALITIES[int(self.quality)]}\n")
+
     def get_tokens(self):
         bundle = Bundle()
         self.app_id = bundle.get_app_id()
