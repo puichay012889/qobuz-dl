@@ -2,11 +2,15 @@
 # of qopy, originally written by Sorrow446. All credits to the
 # original author.
 
+import base64
 import hashlib
 import logging
 import time
 
 import requests
+from cryptography.hazmat.primitives import hashes, padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from qobuz_dl.exceptions import (
     AuthenticationError,
@@ -38,6 +42,9 @@ class Client:
         )
         self.base = "https://www.qobuz.com/api.json/0.2/"
         self.sec = None
+        self.session_id = None
+        self.session_infos = None
+        self.session_key = None
         self.auth(email, pwd)
         self.cfg_setup()
 
@@ -103,9 +110,36 @@ class Client:
                 "format_id": fmt_id,
                 "intent": "stream",
             }
+        elif epoint == "session/start":
+            params = {"profile": "qbz-1"}
+            params["request_ts"] = int(time.time())
+            params["request_sig"] = self._modern_sig(
+                epoint, params, kwargs.get("sec", self.sec)
+            )
+        elif epoint == "file/url":
+            track_id = kwargs["id"]
+            fmt_id = kwargs["fmt_id"]
+            if int(fmt_id) not in (6, 7, 27):
+                raise InvalidQuality("Invalid quality id: choose between 6, 7 or 27")
+            params = {
+                "track_id": track_id,
+                "format_id": fmt_id,
+                "intent": "import",
+            }
+            params["request_ts"] = int(time.time())
+            params["request_sig"] = self._modern_sig(
+                epoint, params, kwargs.get("sec", self.sec)
+            )
         else:
             params = kwargs
-        r = self.session.get(self.base + epoint, params=params)
+        if epoint == "session/start":
+            r = self.session.post(
+                self.base + epoint,
+                data=params,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        else:
+            r = self.session.get(self.base + epoint, params=params)
         if epoint == "user/login":
             if r.status_code == 401:
                 raise AuthenticationError("Invalid credentials.\n" + RESET)
@@ -114,7 +148,7 @@ class Client:
             else:
                 logger.info(f"{GREEN}Logged: OK")
         elif (
-            epoint in ["track/getFileUrl", "favorite/getUserFavorites"]
+            epoint in ["track/getFileUrl", "favorite/getUserFavorites", "file/url"]
             and r.status_code == 400
         ):
             raise InvalidAppSecretError(f"Invalid app secret: {r.json()}.\n" + RESET)
@@ -173,8 +207,81 @@ class Client:
     def get_track_meta(self, id):
         return self.api_call("track/get", id=id)
 
-    def get_track_url(self, id, fmt_id):
-        return self.api_call("track/getFileUrl", id=id, fmt_id=fmt_id)
+    def get_track_url(self, id, fmt_id, force_segments=False):
+        """Fetch a track URL with hybrid Akamai-bypass support.
+
+        - MP3 (fmt_id=5) always uses the legacy direct endpoint.
+        - For lossless/hi-res, tries the fast direct URL first unless
+          *force_segments* is True (triggered after an Akamai block).
+        - Falls back to the session-based segmented endpoint which returns
+          an encrypted url_template that bypasses Akamai throttling.
+        """
+        # MP3 always uses the old endpoint — no Akamai issues there
+        if int(fmt_id) == 5:
+            return self.api_call("track/getFileUrl", id=id, fmt_id=fmt_id)
+
+        # 1. FAST PATH: try the direct URL first
+        if not force_segments:
+            try:
+                track = self.api_call("track/getFileUrl", id=id, fmt_id=fmt_id)
+                if "url" in track:
+                    return track
+            except Exception:
+                pass  # Direct URL failed — fall through to segmented method
+
+        # 2. FAILSAFE PATH: session-based segmented endpoint (bypasses Akamai)
+        if self.session_id is None:
+            session = self.api_call("session/start")
+            self.session_id = session["session_id"]
+            self.session_infos = session["infos"]
+            self.session_key = self._derive_session_key()
+            self.session.headers.update({"X-Session-Id": self.session_id})
+
+        track = self.api_call("file/url", id=id, fmt_id=fmt_id)
+        # Normalise field names returned by the new endpoint
+        if "bits_depth" in track and "bit_depth" not in track:
+            track["bit_depth"] = track["bits_depth"]
+        if track.get("sampling_rate", 0) > 1000:
+            track["sampling_rate"] = track["sampling_rate"] / 1000
+        if "key" in track:
+            track["raw_key"] = self._unwrap_track_key(track["key"])
+        return track
+
+    def _modern_sig(self, epoint, params, sec):
+        object_, method = epoint.split("/")
+        r_sig = [object_, method]
+        for key in sorted(params):
+            value = params[key]
+            if key not in ("request_ts", "request_sig") and isinstance(
+                value, (str, int, float)
+            ):
+                r_sig.extend((key, str(value)))
+        r_sig.extend((str(params["request_ts"]), sec))
+        return hashlib.md5("".join(r_sig).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _b64url_decode(value):
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+    def _derive_session_key(self):
+        salt, info = self.session_infos.split(".")
+        return HKDF(
+            algorithm=hashes.SHA256(),
+            length=16,
+            salt=self._b64url_decode(salt),
+            info=self._b64url_decode(info),
+        ).derive(bytes.fromhex(self.sec))
+
+    def _unwrap_track_key(self, key_token):
+        _, wrapped, iv = key_token.split(".")
+        decryptor = Cipher(
+            algorithms.AES(self.session_key),
+            modes.CBC(self._b64url_decode(iv)),
+        ).decryptor()
+        padded = decryptor.update(self._b64url_decode(wrapped)) + decryptor.finalize()
+        unpadder = padding.PKCS7(128).unpadder()
+        return unpadder.update(padded) + unpadder.finalize()
+
 
     def get_artist_meta(self, id):
         return self.multi_meta("artist/get", "albums_count", id, None)
