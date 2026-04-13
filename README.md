@@ -48,6 +48,22 @@ Search, explore and download Lossless and Hi-Res music from [Qobuz](https://www.
 
 > **Requirement:** An active Qobuz subscription.
 
+### External Dependencies (Highly Recommended)
+
+`qobuz-dl` uses external system binaries for advanced features:
+- **`ffmpeg`**: Required for re-muxing Akamai-bypassed streams. If missing, segmented downloads will fail.
+- **`flac`**: Used to perform integrity checks (`flac -t`) on downloaded files to automatically detect and re-download corrupt FLACs.
+
+**Ubuntu / Debian:**
+```bash
+sudo apt update && sudo apt install ffmpeg flac
+```
+
+**macOS (via Homebrew):**
+```bash
+brew install ffmpeg flac
+```
+
 ### Install
 
 > **Note for Debian/Ubuntu users:** Modern Linux distributions restrict global `pip` installations (PEP 668). We recommend using `pipx` or a virtual environment (`venv`).
