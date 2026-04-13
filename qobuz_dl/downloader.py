@@ -659,6 +659,7 @@ def tqdm_download(
     max_retries=3,
     position: Optional[int] = None,
     leave: bool = True,
+    show_progress: bool = True,
 ):
     """Download *url* to *fname* with automatic retry, exponential backoff,
     and HTTP Range-based resume.
@@ -690,6 +691,7 @@ def tqdm_download(
                 resume_from=resume_from,
                 position=position,
                 leave=leave,
+                show_progress=show_progress,
             )
             return  # success
         except ConnectionError as exc:
@@ -715,6 +717,7 @@ def _tqdm_download_once(
     resume_from=0,
     position: Optional[int] = None,
     leave: bool = True,
+    show_progress: bool = True,
 ):
     """Single download attempt with optional byte-range resume."""
     headers = {}
@@ -749,6 +752,7 @@ def _tqdm_download_once(
             desc=desc,
             position=position,
             leave=leave,
+            disable=not show_progress,
             bar_format=(
                 CYAN
                 + "{n_fmt}/{total_fmt} "
@@ -957,6 +961,7 @@ def _get_extra(item, dirn, extra="cover.jpg", og_quality=False):
         item.replace("_600.", "_org.") if og_quality else item,
         extra_file,
         extra,
+        show_progress=False,
     )
 
 
