@@ -151,20 +151,9 @@ def _build_transfer_bar_format(compact: bool, segmented: bool = False) -> str:
 
 def _build_postprocess_bar_format(compact: bool, color: str, status: str) -> str:
     status_col = f"{status:<9}"
-    if compact:
-        return (
-            color
-            + "{n_fmt}/{total_fmt} "
-            + f"|{{bar:{_progress_bar_width(compact)}}}| "
-            + f"{status_col} \u2502 {{desc}}"
-            + RESET
-            + "\033[K"
-        )
     return (
         color
-        + "{n_fmt}/{total_fmt} "
         + f"|{{bar:{_progress_bar_width(compact)}}}| "
-        + "{percentage:3.0f}% "
         + f"{status_col} \u2502 {{desc}}"
         + RESET
         + "\033[K"
