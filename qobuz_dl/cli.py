@@ -158,8 +158,9 @@ def _reset_config(config_file, use_token=False):
             "# Performance\n"
             "# -----------------------------------------------------------\n"
             "\n"
-            "# Number of parallel track downloads per album (1 = sequential)\n"
-            "workers = 1\n"
+            "# Number of parallel track downloads per album\n"
+            "# (1 = sequential, 0 = dynamic auto-scale based on system CPU)\n"
+            "workers = 0\n"
             "\n"
             "# Download speed limit. Examples: 5M (5 MB/s), 500K (500 KB/s)\n"
             "# Leave empty for unlimited.\n"
@@ -297,7 +298,7 @@ def main():
         smart_discography = config.getboolean("DEFAULT", "smart_discography")
         folder_format = config["DEFAULT"]["folder_format"]
         track_format = config["DEFAULT"]["track_format"]
-        cfg_workers = config["DEFAULT"].get("workers", "1")
+        cfg_workers = config["DEFAULT"].get("workers", "0")
         cfg_limit_rate = config["DEFAULT"].get("limit_rate", "")
         cfg_lucky_type = config["DEFAULT"].get("lucky_type", "album")
         cfg_lucky_number = config["DEFAULT"].get("lucky_number", "1")

@@ -283,7 +283,17 @@ class Download:
                 with stats_lock:
                     stats["failed"] += 1
 
-        with ThreadPoolExecutor(max_workers=self.concurrent_downloads) as pool:
+        track_count = len(tracks)
+        if self.concurrent_downloads <= 0:
+            MAX_SAFE_WORKERS = 6
+            calculated_workers = min(os.cpu_count() or 4, track_count, MAX_SAFE_WORKERS)
+            max_workers = max(calculated_workers, 1)
+            if max_workers > 1:
+                logger.info(f"{YELLOW}Auto-scaling workers: {max_workers} threads allocated for {track_count} track(s)")
+        else:
+            max_workers = self.concurrent_downloads
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_worker, i): i for i in tracks}
             for future in as_completed(futures):
                 try:

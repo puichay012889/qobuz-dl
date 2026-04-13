@@ -58,7 +58,7 @@ def dl_args(subparsers):
         metavar="int",
         default=None,
         type=int,
-        help="number of parallel track downloads per album (default: from config, or 1)",
+        help="number of parallel track downloads per album (1 = sequential, 0 = auto-scale)",
     )
     download.add_argument(
         "--limit-rate",

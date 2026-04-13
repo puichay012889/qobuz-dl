@@ -233,7 +233,7 @@ Run `qobuz-dl -sc` to view your current config, or `qobuz-dl -r` to regenerate i
 | `no_cover` | `--no-cover` | `false` | Skip cover art download |
 | `no_database` | `--no-db` | `false` | Don't track downloads in DB |
 | `smart_discography` | `-s` | `false` | Filter spam in discographies |
-| `workers` | `-w` | `1` | Parallel download workers |
+| `workers` | `-w` | `0` | DL threads (1 = sequential, 0 = auto-scale) |
 | `limit_rate` | `--limit-rate` | *(unlimited)* | Speed limit (e.g. `5M`, `500K`) |
 | `lucky_type` | `-t` | `album` | Lucky mode search type |
 | `lucky_number` | `-n` | `1` | Lucky mode result count |
