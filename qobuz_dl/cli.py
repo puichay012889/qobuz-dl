@@ -26,7 +26,6 @@ QOBUZ_DB = os.path.join(CONFIG_PATH, "qobuz_dl.db")
 
 def _reset_config(config_file, use_token=False):
     logging.info(f"{YELLOW}Creating config file: {config_file}")
-    config = configparser.ConfigParser()
 
     # --- Auth method selection ---
     if not use_token:
@@ -41,36 +40,28 @@ def _reset_config(config_file, use_token=False):
         choice = "2"  # --token flag passed
 
     if choice == "1":
-        # OAuth: credentials will be set later via `qobuz-dl oauth`
-        config["DEFAULT"]["email"] = ""
-        config["DEFAULT"]["password"] = ""
-        config["DEFAULT"]["user_id"] = ""
-        config["DEFAULT"]["user_auth_token"] = ""
+        email, password, user_id, user_auth_token = "", "", "", ""
         logging.info(
             f"{YELLOW}OAuth selected. After setup, run:\n"
             f"  qobuz-dl oauth\n"
             f"to complete authentication."
         )
     elif choice == "2":
+        email, password = "", ""
         user_id = input("Enter your Qobuz user_id (from web player localStorage):\n- ")
         user_auth_token = input("Enter your Qobuz user_auth_token (from web player localStorage):\n- ")
-        config["DEFAULT"]["user_id"] = user_id
-        config["DEFAULT"]["user_auth_token"] = user_auth_token
-        config["DEFAULT"]["email"] = ""
-        config["DEFAULT"]["password"] = ""
     else:
-        config["DEFAULT"]["email"] = input("Enter your email:\n- ")
-        password = input("Enter your password\n- ")
-        config["DEFAULT"]["password"] = hashlib.md5(password.encode("utf-8")).hexdigest()
-        config["DEFAULT"]["user_id"] = ""
-        config["DEFAULT"]["user_auth_token"] = ""
+        email = input("Enter your email:\n- ")
+        raw_pw = input("Enter your password\n- ")
+        password = hashlib.md5(raw_pw.encode("utf-8")).hexdigest()
+        user_id, user_auth_token = "", ""
 
     # --- Download settings ---
-    config["DEFAULT"]["default_folder"] = (
+    default_folder = (
         input("Folder for downloads (leave empty for default 'Qobuz Downloads')\n- ")
         or "Qobuz Downloads"
     )
-    config["DEFAULT"]["default_quality"] = (
+    default_quality = (
         input(
             "Download quality (5, 6, 7, 27) "
             "[320, LOSSLESS, 24B <96KHZ, 24B >96KHZ]"
@@ -78,32 +69,127 @@ def _reset_config(config_file, use_token=False):
         )
         or "6"
     )
-    config["DEFAULT"]["default_limit"] = "20"
-    config["DEFAULT"]["no_m3u"] = "false"
-    config["DEFAULT"]["albums_only"] = "false"
-    config["DEFAULT"]["no_fallback"] = "false"
-    config["DEFAULT"]["og_cover"] = "false"
-    config["DEFAULT"]["embed_art"] = "false"
-    config["DEFAULT"]["no_cover"] = "false"
-    config["DEFAULT"]["no_database"] = "false"
+
+    # --- Fetch tokens ---
     logging.info(f"{YELLOW}Getting tokens. Please wait...")
     bundle = Bundle()
-    config["DEFAULT"]["app_id"] = str(bundle.get_app_id())
-    config["DEFAULT"]["secrets"] = ",".join(bundle.get_secrets().values())
-    config["DEFAULT"]["private_key"] = bundle.get_private_key() or ""
-    config["DEFAULT"]["folder_format"] = DEFAULT_FOLDER
-    config["DEFAULT"]["track_format"] = DEFAULT_TRACK
-    config["DEFAULT"]["smart_discography"] = "false"
-    config["DEFAULT"]["workers"] = "1"
-    config["DEFAULT"]["limit_rate"] = ""
-    config["DEFAULT"]["lucky_type"] = "album"
-    config["DEFAULT"]["lucky_number"] = "1"
-    with open(config_file, "w") as configfile:
-        config.write(configfile)
+    app_id = str(bundle.get_app_id())
+    secrets = ",".join(bundle.get_secrets().values())
+    private_key = bundle.get_private_key() or ""
+
+    # --- Write config with descriptive comments ---
+    with open(config_file, "w") as f:
+        f.write(
+            "# =============================================================\n"
+            "# qobuz-dl configuration file\n"
+            "# All options here serve as defaults and can be overridden\n"
+            "# by CLI flags. Run 'qobuz-dl -sc' to view this file.\n"
+            "# =============================================================\n"
+            "\n"
+            "[DEFAULT]\n"
+            "\n"
+            "# -----------------------------------------------------------\n"
+            "# Authentication\n"
+            "# Choose ONE method: OAuth (recommended), Token, or Email.\n"
+            "# For OAuth: leave all blank, then run 'qobuz-dl oauth'.\n"
+            "# For Token: set user_id + user_auth_token (from browser).\n"
+            "# For Email: set email + password (MD5-hashed, deprecated).\n"
+            "# -----------------------------------------------------------\n"
+            f"email = {email}\n"
+            f"password = {password}\n"
+            f"user_id = {user_id}\n"
+            f"user_auth_token = {user_auth_token}\n"
+            "\n"
+            "# -----------------------------------------------------------\n"
+            "# Download Settings\n"
+            "# -----------------------------------------------------------\n"
+            "\n"
+            "# Where to save downloaded files (absolute or relative path)\n"
+            f"default_folder = {default_folder}\n"
+            "\n"
+            "# Audio quality: 5=MP3 320, 6=FLAC 16-bit, 7=FLAC 24-bit≤96kHz,\n"
+            "# 27=FLAC 24-bit >96kHz (Hi-Res)\n"
+            f"default_quality = {default_quality}\n"
+            "\n"
+            "# Max search results in interactive mode (qobuz-dl fun)\n"
+            "default_limit = 20\n"
+            "\n"
+            "# -----------------------------------------------------------\n"
+            "# File Naming Patterns\n"
+            "# Available keys: {artist}, {albumartist}, {album}, {year},\n"
+            "#   {sampling_rate}, {bit_depth}, {tracktitle}, {tracknumber},\n"
+            "#   {version}\n"
+            "# -----------------------------------------------------------\n"
+            "\n"
+            "# Folder name pattern for albums\n"
+            f"folder_format = {DEFAULT_FOLDER}\n"
+            "\n"
+            "# Track file name pattern\n"
+            f"track_format = {DEFAULT_TRACK}\n"
+            "\n"
+            "# -----------------------------------------------------------\n"
+            "# Behavior Flags  (true / false)\n"
+            "# -----------------------------------------------------------\n"
+            "\n"
+            "# Skip singles, EPs, and Various Artists releases\n"
+            "albums_only = false\n"
+            "\n"
+            "# Don't create .m3u playlist files\n"
+            "no_m3u = false\n"
+            "\n"
+            "# Disable quality auto-fallback (skip instead of downgrading)\n"
+            "no_fallback = false\n"
+            "\n"
+            "# Download cover art in original resolution (larger files)\n"
+            "og_cover = false\n"
+            "\n"
+            "# Embed cover art into audio files\n"
+            "embed_art = false\n"
+            "\n"
+            "# Don't download cover art at all\n"
+            "no_cover = false\n"
+            "\n"
+            "# Don't track downloaded IDs in the database\n"
+            "no_database = false\n"
+            "\n"
+            "# Filter out spam/duplicate albums in artist discography\n"
+            "smart_discography = false\n"
+            "\n"
+            "# -----------------------------------------------------------\n"
+            "# Performance\n"
+            "# -----------------------------------------------------------\n"
+            "\n"
+            "# Number of parallel track downloads per album (1 = sequential)\n"
+            "workers = 1\n"
+            "\n"
+            "# Download speed limit. Examples: 5M (5 MB/s), 500K (500 KB/s)\n"
+            "# Leave empty for unlimited.\n"
+            "limit_rate = \n"
+            "\n"
+            "# -----------------------------------------------------------\n"
+            "# Lucky Mode Defaults (qobuz-dl lucky)\n"
+            "# -----------------------------------------------------------\n"
+            "\n"
+            "# Type of items to search: album, artist, track, playlist\n"
+            "lucky_type = album\n"
+            "\n"
+            "# Number of results to download\n"
+            "lucky_number = 1\n"
+            "\n"
+            "# -----------------------------------------------------------\n"
+            "# Internal / Auto-generated (do not edit unless you know\n"
+            "# what you're doing — regenerate with 'qobuz-dl -r')\n"
+            "# -----------------------------------------------------------\n"
+            f"app_id = {app_id}\n"
+            f"secrets = {secrets}\n"
+            f"private_key = {private_key}\n"
+        )
+
     logging.info(
-        f"{GREEN}Config file updated. Edit more options in {config_file}"
-        "\nso you don't have to call custom flags every time you run "
-        "a qobuz-dl command."
+        f"{GREEN}Config file created: {config_file}\n"
+        "All options are documented with comments.\n"
+        "Edit the file anytime, or override with CLI flags.\n"
+        "Run 'qobuz-dl -sc' to view your current config."
     )
 
 
