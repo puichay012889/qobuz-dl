@@ -199,9 +199,23 @@ class Download:
         is_multiple = True if len([*{*media_numbers}]) > 1 else False
 
         tracks = meta["tracks"]["items"]
+        track_count = len(tracks)
 
-        if self.concurrent_downloads > 1:
-            stats = self._download_tracks_parallel(tracks, dirn, meta, is_multiple)
+        if self.concurrent_downloads <= 0:
+            MAX_SAFE_WORKERS = 6
+            calculated_workers = min(os.cpu_count() or 4, track_count, MAX_SAFE_WORKERS)
+            max_workers = max(calculated_workers, 1)
+            mode_str = "Auto-scale"
+        else:
+            max_workers = self.concurrent_downloads
+            mode_str = "Manual"
+
+        if max_workers > 1 or mode_str == "Auto-scale":
+            from qobuz_dl.color import CYAN
+            logger.info(f"{CYAN}Threads allocated: {max_workers} worker(s) for {track_count} track(s) [{mode_str}]")
+
+        if max_workers > 1:
+            stats = self._download_tracks_parallel(tracks, dirn, meta, is_multiple, max_workers)
         else:
             stats = self._download_tracks_sequential(tracks, dirn, meta, is_multiple)
 
@@ -244,7 +258,7 @@ class Download:
                 stats["failed"] += 1
         return stats
 
-    def _download_tracks_parallel(self, tracks, dirn, meta, is_multiple):
+    def _download_tracks_parallel(self, tracks, dirn, meta, is_multiple, max_workers):
         """Parallel download using ThreadPoolExecutor. Returns stats dict."""
         counter = [0]  # mutable container for atomic-style increment
         stats = {"downloaded": 0, "skipped": 0, "failed": 0}
@@ -282,20 +296,6 @@ class Download:
                 logger.error(f"{RED}Failed to download '{track_title}': {exc}")
                 with stats_lock:
                     stats["failed"] += 1
-
-        track_count = len(tracks)
-        if self.concurrent_downloads <= 0:
-            MAX_SAFE_WORKERS = 6
-            calculated_workers = min(os.cpu_count() or 4, track_count, MAX_SAFE_WORKERS)
-            max_workers = max(calculated_workers, 1)
-            mode_str = "Auto-scale"
-        else:
-            max_workers = self.concurrent_downloads
-            mode_str = "Manual"
-
-        if max_workers > 1 or mode_str == "Auto-scale":
-            from qobuz_dl.color import CYAN
-            logger.info(f"{CYAN}Threads allocated: {max_workers} worker(s) for {track_count} track(s) [{mode_str}]")
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_worker, i): i for i in tracks}
