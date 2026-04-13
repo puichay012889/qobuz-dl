@@ -233,9 +233,6 @@ def _initial_checks():
         os.makedirs(CONFIG_PATH, exist_ok=True)
         _reset_config(CONFIG_FILE)
 
-    if len(sys.argv) < 2:
-        sys.exit(qobuz_dl_args().print_help())
-
 
 def _check_dependencies():
     missing = []
@@ -336,13 +333,19 @@ def main():
                 "Run 'qobuz-dl -r' or 'qobuz-dl oauth' to set up authentication."
             )
 
-        arguments = qobuz_dl_args(
+        parser = qobuz_dl_args(
             default_quality, default_limit, default_folder,
             default_lucky_type=cfg_lucky_type,
             default_lucky_number=int(cfg_lucky_number),
-        ).parse_args()
+        )
+        if len(sys.argv) < 2:
+            sys.exit(parser.print_help())
+        arguments = parser.parse_args()
     except (KeyError, UnicodeDecodeError, configparser.Error) as error:
-        arguments = qobuz_dl_args().parse_args()
+        parser = qobuz_dl_args()
+        if len(sys.argv) < 2:
+            sys.exit(parser.print_help())
+        arguments = parser.parse_args()
         if not arguments.reset:
             sys.exit(
                 f"{RED}Your config file is corrupted: {error}! "
