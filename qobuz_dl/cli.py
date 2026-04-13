@@ -357,7 +357,10 @@ def main():
             secrets = [s for s in config["DEFAULT"].get("secrets", "").split(",") if s]
             private_key = config["DEFAULT"].get("private_key", "")
             
-            qobuz = QobuzDL(arguments.directory, arguments.quality)
+            qobuz = QobuzDL(
+                getattr(arguments, "directory", config["DEFAULT"].get("default_folder", "Qobuz Downloads")),
+                getattr(arguments, "quality", config["DEFAULT"].get("default_quality", "6"))
+            )
             qobuz.app_id = app_id
             qobuz.secrets = secrets
             qobuz.private_key = private_key
