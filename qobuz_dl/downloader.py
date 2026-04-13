@@ -12,7 +12,7 @@ from pathvalidate import sanitize_filename, sanitize_filepath
 from tqdm import tqdm
 
 import qobuz_dl.metadata as metadata
-from qobuz_dl.color import OFF, GREEN, RED, YELLOW, CYAN
+from qobuz_dl.color import OFF, GREEN, RED, YELLOW, CYAN, RESET
 from qobuz_dl.exceptions import NonStreamable
 
 QL_DOWNGRADE = "FormatRestrictedByFormatAvailability"
@@ -151,30 +151,52 @@ class Download:
         tracks = meta["tracks"]["items"]
 
         if self.concurrent_downloads > 1:
-            self._download_tracks_parallel(tracks, dirn, meta, is_multiple)
+            stats = self._download_tracks_parallel(tracks, dirn, meta, is_multiple)
         else:
-            self._download_tracks_sequential(tracks, dirn, meta, is_multiple)
+            stats = self._download_tracks_sequential(tracks, dirn, meta, is_multiple)
 
-        logger.info(f"{GREEN}Completed")
+        # Print summary
+        dl = stats.get("downloaded", 0)
+        sk = stats.get("skipped", 0)
+        fa = stats.get("failed", 0)
+        summary_parts = []
+        if dl:
+            summary_parts.append(f"{GREEN}✓ {dl} downloaded")
+        if sk:
+            summary_parts.append(f"{YELLOW}⚠ {sk} skipped")
+        if fa:
+            summary_parts.append(f"{RED}✗ {fa} failed")
+        logger.info("  ".join(summary_parts) + RESET if summary_parts else f"{GREEN}Completed")
 
     def _download_tracks_sequential(self, tracks, dirn, meta, is_multiple):
-        """Original one-at-a-time download loop."""
+        """Original one-at-a-time download loop. Returns stats dict."""
+        stats = {"downloaded": 0, "skipped": 0, "failed": 0}
         for count, i in enumerate(tracks):
-            parse = self.client.get_track_url(i["id"], fmt_id=self.quality)
-            if "sample" not in parse and parse["sampling_rate"]:
-                is_mp3 = True if int(self.quality) == 5 else False
-                self._download_and_tag(
-                    dirn, count, parse, i, meta, False, is_mp3,
-                    i["media_number"] if is_multiple else None,
-                )
-            else:
-                reason = _describe_restrictions(parse)
-                title = i.get("title", f"track {i.get('id', '?')}")
-                logger.info(f"{OFF}Skipping '{title}': {reason}")
+            try:
+                parse = self.client.get_track_url(i["id"], fmt_id=self.quality)
+                if "sample" not in parse and parse["sampling_rate"]:
+                    is_mp3 = True if int(self.quality) == 5 else False
+                    self._download_and_tag(
+                        dirn, count, parse, i, meta, False, is_mp3,
+                        i["media_number"] if is_multiple else None,
+                    )
+                    stats["downloaded"] += 1
+                else:
+                    reason = _describe_restrictions(parse)
+                    title = i.get("title", f"track {i.get('id', '?')}")
+                    logger.info(f"{OFF}Skipping '{title}': {reason}")
+                    stats["skipped"] += 1
+            except Exception as exc:
+                track_title = i.get("title", i.get("id", "unknown"))
+                logger.error(f"{RED}Failed to download '{track_title}': {exc}")
+                stats["failed"] += 1
+        return stats
 
     def _download_tracks_parallel(self, tracks, dirn, meta, is_multiple):
-        """Parallel download using ThreadPoolExecutor."""
+        """Parallel download using ThreadPoolExecutor. Returns stats dict."""
         counter = [0]  # mutable container for atomic-style increment
+        stats = {"downloaded": 0, "skipped": 0, "failed": 0}
+        stats_lock = threading.Lock()
 
         def _worker(i):
             with self._count_lock:
@@ -188,18 +210,28 @@ class Download:
                         dirn, count, parse, i, meta, False, is_mp3,
                         i["media_number"] if is_multiple else None,
                     )
+                    with stats_lock:
+                        stats["downloaded"] += 1
                 else:
                     reason = _describe_restrictions(parse)
                     title = i.get("title", f"track {i.get('id', '?')}")
                     logger.info(f"{OFF}Skipping '{title}': {reason}")
+                    with stats_lock:
+                        stats["skipped"] += 1
             except Exception as exc:
                 track_title = i.get("title", i.get("id", "unknown"))
                 logger.error(f"{RED}Failed to download '{track_title}': {exc}")
+                with stats_lock:
+                    stats["failed"] += 1
 
         with ThreadPoolExecutor(max_workers=self.concurrent_downloads) as pool:
             futures = {pool.submit(_worker, i): i for i in tracks}
             for future in as_completed(futures):
-                future.result()  # re-raises so outer code can catch if needed
+                try:
+                    future.result()
+                except Exception:
+                    pass  # already logged inside _worker
+        return stats
 
     def download_track(self):
         parse = self.client.get_track_url(self.item_id, self.quality)
