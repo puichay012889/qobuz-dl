@@ -27,8 +27,31 @@ QOBUZ_DB = os.path.join(CONFIG_PATH, "qobuz_dl.db")
 def _reset_config(config_file, use_token=False):
     logging.info(f"{YELLOW}Creating config file: {config_file}")
     config = configparser.ConfigParser()
-    
-    if use_token:
+
+    # --- Auth method selection ---
+    if not use_token:
+        print(
+            "\nChoose authentication method:\n"
+            "  [1] OAuth (recommended — opens Qobuz login in browser)\n"
+            "  [2] Token (user_id + user_auth_token from web player)\n"
+            "  [3] Email + Password (deprecated — may not work)\n"
+        )
+        choice = input("Enter 1, 2, or 3 (default: 1): ").strip() or "1"
+    else:
+        choice = "2"  # --token flag passed
+
+    if choice == "1":
+        # OAuth: credentials will be set later via `qobuz-dl oauth`
+        config["DEFAULT"]["email"] = ""
+        config["DEFAULT"]["password"] = ""
+        config["DEFAULT"]["user_id"] = ""
+        config["DEFAULT"]["user_auth_token"] = ""
+        logging.info(
+            f"{YELLOW}OAuth selected. After setup, run:\n"
+            f"  qobuz-dl oauth\n"
+            f"to complete authentication."
+        )
+    elif choice == "2":
         user_id = input("Enter your Qobuz user_id (from web player localStorage):\n- ")
         user_auth_token = input("Enter your Qobuz user_auth_token (from web player localStorage):\n- ")
         config["DEFAULT"]["user_id"] = user_id
@@ -41,7 +64,8 @@ def _reset_config(config_file, use_token=False):
         config["DEFAULT"]["password"] = hashlib.md5(password.encode("utf-8")).hexdigest()
         config["DEFAULT"]["user_id"] = ""
         config["DEFAULT"]["user_auth_token"] = ""
-    
+
+    # --- Download settings ---
     config["DEFAULT"]["default_folder"] = (
         input("Folder for downloads (leave empty for default 'Qobuz Downloads')\n- ")
         or "Qobuz Downloads"
