@@ -164,13 +164,14 @@ def qobuz_dl_args(
     parser = argparse.ArgumentParser(
         prog="qobuz-dl",
         description=(
-            "The ultimate Qobuz music downloader.\nSee usage"
-            " examples on https://github.com/vitiko98/qobuz-dl"
+            "The modernized Qobuz audiophile downloader.\n"
+            "Features Auto-scaling workers, OAuth browser login, and FLAC integrity checks.\n"
+            "See documentation on https://github.com/amardikamahdi/qobuz-dl"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
-        "-r", "--reset", action="store_true", help="create/reset config file"
+        "-r", "--reset", action="store_true", help="configure authentication and reset settings"
     )
     parser.add_argument(
         "-p",
