@@ -258,10 +258,22 @@ class Download:
             logger.info(f"{OFF}{track_title} was already downloaded")
             return
 
+        # Build a rich progress bar description: [03/12] Artist - Track Title
+        total_tracks = (
+            album_or_track_metadata.get("tracks", {}).get("total")
+            if not is_track else None
+        )
+        track_num = track_metadata.get("track_number", tmp_count + 1)
+        if total_tracks and not is_track:
+            track_prefix = f"[{track_num:02d}/{total_tracks:02d}]"
+        else:
+            track_prefix = f"[{track_num:02d}]"
+        dl_desc = f"{track_prefix} {artist} - {track_title}" if artist else f"{track_prefix} {track_title}"
+
         if "url" in track_url_dict:
             try:
                 # 1. FAST PATH: direct URL download
-                tqdm_download(track_url_dict["url"], filename, filename)
+                tqdm_download(track_url_dict["url"], filename, dl_desc)
             except (ConnectionError, requests.exceptions.ChunkedEncodingError):
                 # Akamai block detected — tqdm_download normalizes all streaming
                 # errors to ConnectionError, but keep ChunkedEncodingError as
@@ -277,10 +289,10 @@ class Download:
                 track_url_dict = self.client.get_track_url(
                     track_id, int(self.quality), force_segments=True
                 )
-                tqdm_download_segments(track_url_dict, filename, filename)
+                tqdm_download_segments(track_url_dict, filename, dl_desc)
         else:
             # url_template already present — go straight to segmented download
-            tqdm_download_segments(track_url_dict, filename, filename)
+            tqdm_download_segments(track_url_dict, filename, dl_desc)
         tag_function = metadata.tag_mp3 if is_mp3 else metadata.tag_flac
         try:
             tag_function(
@@ -433,7 +445,16 @@ def _tqdm_download_once(url, fname, desc, resume_from=0):
             unit_scale=True,
             unit_divisor=1024,
             desc=desc,
-            bar_format=CYAN + "{n_fmt}/{total_fmt} /// {desc}",
+            bar_format=(
+                CYAN
+                + "{n_fmt}/{total_fmt} "
+                + "|{bar:25}| "
+                + "{percentage:3.0f}% "
+                + "{rate_fmt} "
+                + "ETA {remaining} "
+                + "\u2502 {desc}"
+            ),
+            ncols=120,
         ) as bar:
             for data in r.iter_content(chunk_size=1024):
                 size = file.write(data)
@@ -467,7 +488,16 @@ def tqdm_download_segments(track_url_dict, fname, desc):
             unit_scale=True,
             unit_divisor=1024,
             desc=desc,
-            bar_format=CYAN + "{n_fmt}/{total_fmt} /// {desc}",
+            bar_format=(
+                CYAN
+                + "{n_fmt}/{total_fmt} "
+                + "|{bar:25}| "
+                + "{percentage:3.0f}% "
+                + "{rate_fmt} "
+                + "ETA {remaining} "
+                + "\u2502 {desc} [seg]"
+            ),
+            ncols=120,
         ) as bar:
             for segment in range(track_url_dict["n_segments"] + 1):
                 r = requests.get(
