@@ -50,13 +50,32 @@ Search, explore and download Lossless and Hi-Res music from [Qobuz](https://www.
 
 ### Install
 
-```bash
-# Linux / macOS
-pip3 install --upgrade qobuz-dl
+> **Note for Debian/Ubuntu users:** Modern Linux distributions restrict global `pip` installations (PEP 668). We recommend using `pipx` or a virtual environment (`venv`).
 
-# Windows
-pip3 install windows-curses
-pip3 install --upgrade qobuz-dl
+#### Global Install with pipx (Linux / macOS - Recommended)
+```bash
+# 1. Install pipx (if not already installed)
+sudo apt install pipx
+pipx ensurepath
+
+# 2. Install qobuz-dl from this local repository
+pipx install .
+```
+
+#### Virtual Environment (Linux / macOS - Alternative)
+```bash
+# 1. Create and activate a virtual environment
+python3 -m venv qobuz-env
+source qobuz-env/bin/activate
+
+# 2. Install qobuz-dl from this local repository
+pip install .
+```
+
+#### Windows
+```bash
+pip install windows-curses
+pip install .
 ```
 
 ### Initial Setup
