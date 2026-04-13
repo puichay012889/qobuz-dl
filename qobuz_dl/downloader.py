@@ -33,6 +33,33 @@ DEFAULT_TRACK = "{tracknumber}. {tracktitle}"
 
 logger = logging.getLogger(__name__)
 
+# Human-readable translations for Qobuz API restriction codes
+_RESTRICTION_LABELS = {
+    "TrackRestrictedByPurchaseCredentials": "purchase required",
+    "SampleRestrictedByRightHolders": "sample blocked by rights holder",
+    "FormatRestrictedByFormatAvailability": "format not available",
+    "TrackRestrictedByRightHolders": "blocked by rights holder",
+    "TrackRestrictedByTerritorialAvailability": "not available in your region",
+    "FormatRestrictedByFormatAvailability": "format not available at this quality",
+}
+
+
+def _describe_restrictions(track_url_dict):
+    """Return a human-readable string describing why a track was skipped."""
+    restrictions = track_url_dict.get("restrictions", [])
+    if not restrictions:
+        return "demo/sample"
+    codes = [r.get("code", "unknown") for r in restrictions if isinstance(r, dict)]
+    labels = [_RESTRICTION_LABELS.get(c, c) for c in codes]
+    # deduplicate while preserving order
+    seen = set()
+    unique = []
+    for l in labels:
+        if l not in seen:
+            seen.add(l)
+            unique.append(l)
+    return ", ".join(unique)
+
 
 class Download:
     def __init__(
@@ -141,7 +168,9 @@ class Download:
                     i["media_number"] if is_multiple else None,
                 )
             else:
-                logger.info(f"{OFF}Demo. Skipping")
+                reason = _describe_restrictions(parse)
+                title = i.get("title", f"track {i.get('id', '?')}")
+                logger.info(f"{OFF}Skipping '{title}': {reason}")
 
     def _download_tracks_parallel(self, tracks, dirn, meta, is_multiple):
         """Parallel download using ThreadPoolExecutor."""
@@ -160,7 +189,9 @@ class Download:
                         i["media_number"] if is_multiple else None,
                     )
                 else:
-                    logger.info(f"{OFF}Demo. Skipping")
+                    reason = _describe_restrictions(parse)
+                    title = i.get("title", f"track {i.get('id', '?')}")
+                    logger.info(f"{OFF}Skipping '{title}': {reason}")
             except Exception as exc:
                 track_title = i.get("title", i.get("id", "unknown"))
                 logger.error(f"{RED}Failed to download '{track_title}': {exc}")
@@ -218,7 +249,8 @@ class Download:
                 False,
             )
         else:
-            logger.info(f"{OFF}Demo. Skipping")
+            reason = _describe_restrictions(parse)
+            logger.info(f"{OFF}Skipping track {self.item_id}: {reason}")
         logger.info(f"{GREEN}Completed")
 
     def _download_and_tag(
