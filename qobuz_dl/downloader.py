@@ -731,14 +731,14 @@ class Download:
 
         show_postprocess_status = position is not None and not leave
         if show_postprocess_status:
+            def _postprocess_desc(status: str) -> str:
+                return _fit_progress_desc(f"{status} | {dl_desc_raw}", compact_ui)
+
             post_steps = ["tagging"] if is_mp3 else ["verifying", "tagging"]
             initial_post_color = GREEN if is_mp3 else YELLOW
             with tqdm(
                 total=len(post_steps),
-                desc=_fit_progress_desc(
-                    f"{dl_desc_raw} | {post_steps[0]}",
-                    compact_ui,
-                ),
+                desc=_postprocess_desc(post_steps[0]),
                 position=position,
                 leave=False,
                 bar_format=_build_postprocess_bar_format(
@@ -756,12 +756,7 @@ class Download:
                         compact_ui,
                         GREEN,
                     )
-                    post_bar.set_description_str(
-                        _fit_progress_desc(
-                            f"{dl_desc_raw} | tagging",
-                            compact_ui,
-                        )
-                    )
+                    post_bar.set_description_str(_postprocess_desc("tagging"))
                     post_bar.refresh()
                 _run_tagging()
                 post_bar.update(1)
