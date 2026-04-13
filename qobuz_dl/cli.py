@@ -195,6 +195,7 @@ def main():
         folder_format=arguments.folder_format or folder_format,
         track_format=arguments.track_format or track_format,
         smart_discography=arguments.smart_discography or smart_discography,
+        concurrent_downloads=getattr(arguments, "workers", 1),
     )
 
     if arguments.command == "oauth":

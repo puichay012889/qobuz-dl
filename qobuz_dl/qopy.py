@@ -5,6 +5,7 @@
 import base64
 import hashlib
 import logging
+import threading
 import time
 
 import requests
@@ -47,6 +48,7 @@ class Client:
         self.session_key = None
         self._auth_method = None   # 'password' | 'token' — used by reauth()
         self._auth_creds = {}
+        self._session_lock = threading.Lock()  # guards session_id init in get_track_url
         if not skip_auth:
             self.auth(email, pwd)
             self.cfg_setup()
@@ -277,12 +279,15 @@ class Client:
                 pass  # Direct URL failed — fall through to segmented method
 
         # 2. FAILSAFE PATH: session-based segmented endpoint (bypasses Akamai)
+        # Double-checked locking: only one thread initialises the session.
         if self.session_id is None:
-            session = self.api_call("session/start")
-            self.session_id = session["session_id"]
-            self.session_infos = session["infos"]
-            self.session_key = self._derive_session_key()
-            self.session.headers.update({"X-Session-Id": self.session_id})
+            with self._session_lock:
+                if self.session_id is None:  # re-check inside the lock
+                    session = self.api_call("session/start")
+                    self.session_id = session["session_id"]
+                    self.session_infos = session["infos"]
+                    self.session_key = self._derive_session_key()
+                    self.session.headers.update({"X-Session-Id": self.session_id})
 
         track = self.api_call("file/url", id=id, fmt_id=fmt_id)
         # Normalise field names returned by the new endpoint

@@ -59,6 +59,7 @@ class QobuzDL:
         "{sampling_rate}kHz]",
         track_format="{tracknumber}. {tracktitle}",
         smart_discography=False,
+        concurrent_downloads=1,
     ):
         self.directory = create_and_return_dir(directory)
         self.quality = quality
@@ -75,6 +76,7 @@ class QobuzDL:
         self.folder_format = folder_format
         self.track_format = track_format
         self.smart_discography = smart_discography
+        self.concurrent_downloads = max(1, int(concurrent_downloads))
 
     def initialize_client(self, email, pwd, app_id, secrets):
         self.client = qopy.Client(email, pwd, app_id, secrets)
@@ -135,6 +137,7 @@ class QobuzDL:
                 self.folder_format,
                 self.track_format,
             )
+            dloader.concurrent_downloads = self.concurrent_downloads
             dloader.download_id_by_type(not album)
             handle_download_id(self.downloads_db, item_id, add_id=True)
         except (requests.exceptions.RequestException, NonStreamable) as e:

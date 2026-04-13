@@ -52,6 +52,14 @@ def dl_args(subparsers):
         nargs="+",
         help=("one or more URLs (space separated) or a text file"),
     )
+    download.add_argument(
+        "-w",
+        "--workers",
+        metavar="int",
+        default=1,
+        type=int,
+        help="number of parallel track downloads per album (default: 1)",
+    )
     return download
 
 

@@ -1,7 +1,9 @@
 import logging
 import os
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Tuple
 
 import requests
@@ -58,6 +60,8 @@ class Download:
         self.no_cover = no_cover
         self.folder_format = folder_format or DEFAULT_FOLDER
         self.track_format = track_format or DEFAULT_TRACK
+        self.concurrent_downloads = 1  # set by caller; > 1 enables parallel mode
+        self._count_lock = threading.Lock()  # protects the tmp-file counter
 
     def download_id_by_type(self, track=True):
         if not track:
@@ -116,24 +120,55 @@ class Download:
                 pass
         media_numbers = [track["media_number"] for track in meta["tracks"]["items"]]
         is_multiple = True if len([*{*media_numbers}]) > 1 else False
-        for i in meta["tracks"]["items"]:
+
+        tracks = meta["tracks"]["items"]
+
+        if self.concurrent_downloads > 1:
+            self._download_tracks_parallel(tracks, dirn, meta, is_multiple)
+        else:
+            self._download_tracks_sequential(tracks, dirn, meta, is_multiple)
+
+        logger.info(f"{GREEN}Completed")
+
+    def _download_tracks_sequential(self, tracks, dirn, meta, is_multiple):
+        """Original one-at-a-time download loop."""
+        for count, i in enumerate(tracks):
             parse = self.client.get_track_url(i["id"], fmt_id=self.quality)
             if "sample" not in parse and parse["sampling_rate"]:
                 is_mp3 = True if int(self.quality) == 5 else False
                 self._download_and_tag(
-                    dirn,
-                    count,
-                    parse,
-                    i,
-                    meta,
-                    False,
-                    is_mp3,
+                    dirn, count, parse, i, meta, False, is_mp3,
                     i["media_number"] if is_multiple else None,
                 )
             else:
                 logger.info(f"{OFF}Demo. Skipping")
-            count = count + 1
-        logger.info(f"{GREEN}Completed")
+
+    def _download_tracks_parallel(self, tracks, dirn, meta, is_multiple):
+        """Parallel download using ThreadPoolExecutor."""
+        counter = [0]  # mutable container for atomic-style increment
+
+        def _worker(i):
+            with self._count_lock:
+                count = counter[0]
+                counter[0] += 1
+            try:
+                parse = self.client.get_track_url(i["id"], fmt_id=self.quality)
+                if "sample" not in parse and parse["sampling_rate"]:
+                    is_mp3 = True if int(self.quality) == 5 else False
+                    self._download_and_tag(
+                        dirn, count, parse, i, meta, False, is_mp3,
+                        i["media_number"] if is_multiple else None,
+                    )
+                else:
+                    logger.info(f"{OFF}Demo. Skipping")
+            except Exception as exc:
+                track_title = i.get("title", i.get("id", "unknown"))
+                logger.error(f"{RED}Failed to download '{track_title}': {exc}")
+
+        with ThreadPoolExecutor(max_workers=self.concurrent_downloads) as pool:
+            futures = {pool.submit(_worker, i): i for i in tracks}
+            for future in as_completed(futures):
+                future.result()  # re-raises so outer code can catch if needed
 
     def download_track(self):
         parse = self.client.get_track_url(self.item_id, self.quality)
