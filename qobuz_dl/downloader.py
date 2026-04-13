@@ -149,10 +149,10 @@ def _build_transfer_bar_format(compact: bool, segmented: bool = False) -> str:
     )
 
 
-def _build_postprocess_bar_format(compact: bool) -> str:
+def _build_postprocess_bar_format(compact: bool, color: str) -> str:
     if compact:
         return (
-            CYAN
+            color
             + "{n_fmt}/{total_fmt} "
             + f"|{{bar:{_progress_bar_width(compact)}}}| "
             + "\u2502 {desc}"
@@ -160,7 +160,7 @@ def _build_postprocess_bar_format(compact: bool) -> str:
             + "\033[K"
         )
     return (
-        CYAN
+        color
         + "{n_fmt}/{total_fmt} "
         + f"|{{bar:{_progress_bar_width(compact)}}}| "
         + "{percentage:3.0f}% "
@@ -732,6 +732,7 @@ class Download:
         show_postprocess_status = position is not None and not leave
         if show_postprocess_status:
             post_steps = ["tagging"] if is_mp3 else ["verifying", "tagging"]
+            initial_post_color = GREEN if is_mp3 else YELLOW
             with tqdm(
                 total=len(post_steps),
                 desc=_fit_progress_desc(
@@ -740,7 +741,10 @@ class Download:
                 ),
                 position=position,
                 leave=False,
-                bar_format=_build_postprocess_bar_format(compact_ui),
+                bar_format=_build_postprocess_bar_format(
+                    compact_ui,
+                    initial_post_color,
+                ),
                 dynamic_ncols=True,
                 mininterval=_TQDM_MININTERVAL,
                 maxinterval=_TQDM_MAXINTERVAL,
@@ -748,12 +752,17 @@ class Download:
                 if not is_mp3:
                     _run_integrity_check()
                     post_bar.update(1)
+                    post_bar.bar_format = _build_postprocess_bar_format(
+                        compact_ui,
+                        GREEN,
+                    )
                     post_bar.set_description_str(
                         _fit_progress_desc(
                             f"{dl_desc_raw} | tagging",
                             compact_ui,
                         )
                     )
+                    post_bar.refresh()
                 _run_tagging()
                 post_bar.update(1)
         else:
