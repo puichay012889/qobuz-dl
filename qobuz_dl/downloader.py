@@ -427,6 +427,26 @@ class Download:
         else:
             # url_template already present — go straight to segmented download
             tqdm_download_segments(track_url_dict, filename, dl_desc)
+
+        # Integrity check before tagging
+        if not is_mp3 and os.path.isfile(filename):
+            try:
+                result = subprocess.run(
+                    ["flac", "-t", "-s", filename],
+                    capture_output=True, timeout=60,
+                )
+                if result.returncode != 0:
+                    logger.warning(
+                        f"{YELLOW}FLAC integrity check failed for '{track_title}'. "
+                        "File may be corrupt."
+                    )
+                else:
+                    logger.debug(f"FLAC integrity OK: {track_title}")
+            except FileNotFoundError:
+                logger.debug("flac binary not found, skipping integrity check")
+            except subprocess.TimeoutExpired:
+                logger.debug(f"FLAC integrity check timed out for {track_title}")
+
         tag_function = metadata.tag_mp3 if is_mp3 else metadata.tag_flac
         try:
             tag_function(
