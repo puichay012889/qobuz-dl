@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -38,6 +39,9 @@ logger = logging.getLogger(__name__)
 # Module-level download speed limit in bytes/sec.  0 = unlimited.
 # Set by cli.py from --limit-rate flag.
 _rate_limit_bps = 0
+_TQDM_MININTERVAL = 0.12
+_TQDM_MAXINTERVAL = 0.80
+_TQDM_SMOOTHING = 0.10
 
 # Human-readable translations for Qobuz API restriction codes
 _RESTRICTION_LABELS = {
@@ -67,9 +71,39 @@ def _describe_restrictions(track_url_dict):
     return ", ".join(unique)
 
 
-def _format_master_progress(done: int, total: int) -> str:
+def _ellipsis_middle(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    if max_len <= 3:
+        return text[:max_len]
+    head_len = (max_len - 3) // 2
+    tail_len = max_len - 3 - head_len
+    return f"{text[:head_len]}...{text[-tail_len:]}"
+
+
+def _fit_progress_desc(desc: str) -> str:
+    # Keep per-track description stable and avoid wraps in narrower terminals.
+    cols = shutil.get_terminal_size((120, 24)).columns
+    max_desc_len = max(24, min(72, cols // 2))
+    return _ellipsis_middle(desc, max_desc_len)
+
+
+def _format_master_progress(
+    done: int,
+    total: int,
+    downloaded: int = 0,
+    skipped: int = 0,
+    failed: int = 0,
+    active: int = 0,
+) -> str:
     width = max(2, len(str(max(total, 0))))
-    return f"[{done:0{width}d}/{total:0{width}d}] tracks done"
+    return (
+        f"[{done:0{width}d}/{total:0{width}d}] "
+        f"ok:{downloaded:0{width}d} "
+        f"sk:{skipped:0{width}d} "
+        f"er:{failed:0{width}d} "
+        f"act:{active:0{width}d}"
+    )
 
 
 class WorkerSlotAllocator:
@@ -301,6 +335,8 @@ class Download:
         """Parallel download using ThreadPoolExecutor. Returns stats dict."""
         counter = [0]  # mutable container for atomic-style increment
         stats = {"downloaded": 0, "skipped": 0, "failed": 0}
+        active_state = {"count": 0}
+        active_lock = threading.Lock()
         slot_allocator = WorkerSlotAllocator(max_workers)
         track_count = len(tracks)
         # Worker slots are fixed to 0..max_workers-1.
@@ -325,12 +361,16 @@ class Download:
                     + RESET
                     + "\033[K"
                 ),
+                mininterval=_TQDM_MININTERVAL,
+                maxinterval=_TQDM_MAXINTERVAL,
             )
 
         def _worker(i):
             with self._count_lock:
                 count = counter[0]
                 counter[0] += 1
+            with active_lock:
+                active_state["count"] += 1
             slot = slot_allocator.get_slot()
             # Stagger API requests to reduce Akamai throttling risk
             stagger = count * 0.5
@@ -359,6 +399,9 @@ class Download:
                 track_title = i.get("title", i.get("id", "unknown"))
                 logger.error(f"{RED}Failed to download '{track_title}': {exc}")
                 return "failed"
+            finally:
+                with active_lock:
+                    active_state["count"] -= 1
 
         try:
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -378,8 +421,17 @@ class Download:
                             + stats["skipped"]
                             + stats["failed"]
                         )
+                        with active_lock:
+                            active_count = max(active_state["count"], 0)
                         master_bar.set_description_str(
-                            _format_master_progress(completed, track_count)
+                            _format_master_progress(
+                                completed,
+                                track_count,
+                                downloaded=stats["downloaded"],
+                                skipped=stats["skipped"],
+                                failed=stats["failed"],
+                                active=active_count,
+                            )
                         )
                         master_bar.update(1)
         finally:
@@ -503,7 +555,11 @@ class Download:
             track_prefix = f"[{track_num:02d}/{total_tracks:02d}]"
         else:
             track_prefix = f"[{track_num:02d}]"
-        dl_desc = f"{track_prefix} {artist} - {track_title}" if artist else f"{track_prefix} {track_title}"
+        dl_desc_raw = (
+            f"{track_prefix} {artist} - {track_title}"
+            if artist else f"{track_prefix} {track_title}"
+        )
+        dl_desc = _fit_progress_desc(dl_desc_raw)
 
         if "url" in track_url_dict:
             try:
@@ -589,7 +645,7 @@ class Download:
             post_steps = ["tagging"] if is_mp3 else ["verifying", "tagging"]
             with tqdm(
                 total=len(post_steps),
-                desc=f"{dl_desc} | {post_steps[0]}",
+                desc=_fit_progress_desc(f"{dl_desc_raw} | {post_steps[0]}"),
                 position=position,
                 leave=False,
                 bar_format=(
@@ -601,11 +657,15 @@ class Download:
                     + "\033[K"
                 ),
                 dynamic_ncols=True,
+                mininterval=_TQDM_MININTERVAL,
+                maxinterval=_TQDM_MAXINTERVAL,
             ) as post_bar:
                 if not is_mp3:
                     _run_integrity_check()
                     post_bar.update(1)
-                    post_bar.set_description_str(f"{dl_desc} | tagging")
+                    post_bar.set_description_str(
+                        _fit_progress_desc(f"{dl_desc_raw} | tagging")
+                    )
                 _run_tagging()
                 post_bar.update(1)
         else:
@@ -796,6 +856,9 @@ def _tqdm_download_once(
                 + "\033[K"
             ),
             dynamic_ncols=True,
+            mininterval=_TQDM_MININTERVAL,
+            maxinterval=_TQDM_MAXINTERVAL,
+            smoothing=_TQDM_SMOOTHING,
         ) as bar:
             _rl_start = time.monotonic()
             _rl_bytes = 0
@@ -858,6 +921,9 @@ def tqdm_download_segments(
                 + "\033[K"
             ),
             dynamic_ncols=True,
+            mininterval=_TQDM_MININTERVAL,
+            maxinterval=_TQDM_MAXINTERVAL,
+            smoothing=_TQDM_SMOOTHING,
         ) as bar:
             for segment in range(track_url_dict["n_segments"] + 1):
                 r = requests.get(
