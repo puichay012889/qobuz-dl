@@ -168,21 +168,6 @@ def _fit_progress_desc(desc: str, compact: Optional[bool] = None) -> str:
     return _ellipsis_middle(desc, desc_width).ljust(desc_width)
 
 
-def _clear_progress_slot(position: int) -> None:
-    """Force-clear a tqdm slot to avoid stale blank rows after transitions."""
-    with tqdm(
-        total=0,
-        desc="",
-        position=position,
-        leave=False,
-        bar_format="{desc}\033[K",
-        dynamic_ncols=True,
-        mininterval=_TQDM_MININTERVAL,
-        maxinterval=_TQDM_MAXINTERVAL,
-    ) as clear_bar:
-        clear_bar.refresh()
-
-
 def _format_master_progress(
     done: int,
     total: int,
@@ -206,26 +191,29 @@ def _format_master_progress(
 
 
 class WorkerSlotAllocator:
-    """Assign a persistent tqdm row (slot) to each worker thread."""
+    """Assign reusable tqdm slots to active worker tasks."""
 
     def __init__(self, slot_count: int):
         self._slot_count = max(1, int(slot_count))
         self._lock = threading.Lock()
-        self._thread_slots = {}
-        self._next_slot = 0
+        self._available_slots = list(range(self._slot_count))
+        self._in_use = set()
 
-    def get_slot(self) -> int:
-        thread_id = threading.get_ident()
+    def acquire_slot(self) -> int:
         with self._lock:
-            slot = self._thread_slots.get(thread_id)
-            if slot is not None:
-                return slot
-            slot = self._next_slot
-            if slot >= self._slot_count:
-                slot %= self._slot_count
-            self._thread_slots[thread_id] = slot
-            self._next_slot += 1
+            if not self._available_slots:
+                # Defensive fallback; should not happen with fixed-size worker pool.
+                return 0
+            slot = self._available_slots.pop(0)
+            self._in_use.add(slot)
             return slot
+
+    def release_slot(self, slot: int) -> None:
+        with self._lock:
+            if slot in self._in_use:
+                self._in_use.remove(slot)
+                self._available_slots.append(slot)
+                self._available_slots.sort()
 
 
 class Download:
@@ -440,9 +428,9 @@ class Download:
         track_count = len(tracks)
         compact_ui = _is_compact_progress_layout()
         # Worker slots are fixed to 0..max_workers-1.
-        # Leave one spacer row after workers, then render the master bar.
+        # Render the master bar directly below worker slots.
         worker_position_offset = 0
-        master_position = max_workers + 1
+        master_position = max_workers
 
         master_bar = None
         if track_count and self.show_master_progress:
@@ -463,7 +451,7 @@ class Download:
                 counter[0] += 1
             with active_lock:
                 active_state["count"] += 1
-            slot = slot_allocator.get_slot()
+            slot = slot_allocator.acquire_slot()
             slot_position = slot + worker_position_offset
 
             track_num = i.get("track_number", count + 1)
@@ -477,32 +465,43 @@ class Download:
             slot_desc = _fit_progress_desc(slot_desc_raw, compact_ui)
 
             try:
-                # Placeholder between completed tagging and next transfer start.
-                with tqdm(
-                    total=1,
-                    desc=slot_desc,
-                    position=slot_position,
-                    leave=False,
-                    bar_format=_build_postprocess_bar_format(
-                        compact_ui,
-                        OFF + CYAN,
-                        "queued",
-                    ),
-                    dynamic_ncols=True,
-                    mininterval=_TQDM_MININTERVAL,
-                    maxinterval=_TQDM_MAXINTERVAL,
-                ) as queued_bar:
-                    # Stagger API requests to reduce Akamai throttling risk
-                    stagger = count * 0.5
-                    if stagger > 0:
-                        logger.debug(f"Worker {count}: stagger delay {stagger:.1f}s")
-                        time.sleep(stagger)
+                # Show queued placeholder only while there are unstarted tracks.
+                stagger = count * 0.5
+                remaining_unstarted = max(track_count - (count + 1), 0)
+                show_queued = stagger > 0 and remaining_unstarted > 0
 
+                if show_queued:
+                    with tqdm(
+                        total=1,
+                        desc=slot_desc,
+                        position=slot_position,
+                        leave=False,
+                        bar_format=_build_postprocess_bar_format(
+                            compact_ui,
+                            OFF + CYAN,
+                            "queued",
+                        ),
+                        dynamic_ncols=True,
+                        mininterval=_TQDM_MININTERVAL,
+                        maxinterval=_TQDM_MAXINTERVAL,
+                    ) as queued_bar:
+                        logger.debug(
+                            f"Worker {count}: queued delay {stagger:.1f}s"
+                        )
+                        time.sleep(stagger)
+                        parse, actual_q = self._get_track_url_with_fallback(
+                            i["id"], self.quality
+                        )
+                        queued_bar.update(1)
+                else:
+                    if stagger > 0:
+                        logger.debug(
+                            f"Worker {count}: stagger delay {stagger:.1f}s"
+                        )
+                        time.sleep(stagger)
                     parse, actual_q = self._get_track_url_with_fallback(
                         i["id"], self.quality
                     )
-                    queued_bar.update(1)
-                    queued_bar.clear()
 
                 if "sample" not in parse and parse.get("sampling_rate"):
                     is_mp3 = True if int(actual_q) == 5 else False
@@ -523,7 +522,7 @@ class Download:
                 logger.error(f"{RED}Failed to download '{track_title}': {exc}")
                 return "failed"
             finally:
-                _clear_progress_slot(slot_position)
+                slot_allocator.release_slot(slot)
                 with active_lock:
                     active_state["count"] -= 1
 
