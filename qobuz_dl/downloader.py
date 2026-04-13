@@ -329,15 +329,26 @@ class Download:
 
 
 def tqdm_download(url, fname, desc, max_retries=3):
-    """Download *url* to *fname* with automatic retry + exponential backoff.
+    """Download *url* to *fname* with automatic retry, exponential backoff,
+    and HTTP Range-based resume.
 
-    Retries up to *max_retries* times (waits 1s → 2s → 4s between attempts)
-    before raising ConnectionError, which triggers the Akamai segmented
-    fallback in _download_and_tag.
+    On each retry attempt, checks if a partial file exists and sends a
+    Range header to resume from that byte offset instead of restarting.
+    If the server doesn't support Range requests, falls back gracefully
+    to a full restart.
+
+    After all retries are exhausted, raises ConnectionError which triggers
+    the Akamai segmented download fallback in _download_and_tag.
     """
     for attempt in range(max_retries):
+        # On retry, try to resume from partial file rather than restart
+        resume_from = (
+            os.path.getsize(fname)
+            if attempt > 0 and os.path.isfile(fname)
+            else 0
+        )
         try:
-            _tqdm_download_once(url, fname, desc)
+            _tqdm_download_once(url, fname, desc, resume_from=resume_from)
             return  # success
         except ConnectionError as exc:
             if attempt < max_retries - 1:
@@ -345,28 +356,44 @@ def tqdm_download(url, fname, desc, max_retries=3):
                 logger.info(
                     f"{YELLOW}Download interrupted (attempt {attempt + 1}/{max_retries}). "
                     f"Retrying in {wait}s..."
+                    + (f" Resuming from {resume_from / 1024 / 1024:.1f} MB." if resume_from else "")
                 )
                 time.sleep(wait)
-                # remove partial file before retry
+            else:
+                # All retries exhausted — clean up and propagate to Akamai fallback
                 if os.path.isfile(fname):
                     os.remove(fname)
-            else:
-                raise  # all retries exhausted → propagate to Akamai fallback
+                raise
 
 
-def _tqdm_download_once(url, fname, desc):
-    """Single download attempt — called by tqdm_download."""
+def _tqdm_download_once(url, fname, desc, resume_from=0):
+    """Single download attempt with optional byte-range resume."""
+    headers = {}
+    if resume_from:
+        headers["Range"] = f"bytes={resume_from}-"
+
     try:
-        r = requests.get(url, allow_redirects=True, stream=True)
+        r = requests.get(url, allow_redirects=True, stream=True, headers=headers)
         r.raise_for_status()
     except requests.exceptions.RequestException as e:
         raise ConnectionError(f"Failed to start download for {fname}: {e}") from e
 
-    total = int(r.headers.get("content-length", 0))
-    download_size = 0
+    # If server returns 200 instead of 206, it doesn't support Range — restart
+    if resume_from and r.status_code == 200:
+        logger.info(f"{YELLOW}Server doesn't support resume. Restarting download...")
+        resume_from = 0
+        if os.path.isfile(fname):
+            os.remove(fname)
+
+    content_length = int(r.headers.get("content-length", 0))
+    total = content_length + resume_from
+    download_size = resume_from
+    file_mode = "ab" if resume_from else "wb"
+
     try:
-        with open(fname, "wb") as file, tqdm(
+        with open(fname, file_mode) as file, tqdm(
             total=total,
+            initial=resume_from,
             unit="iB",
             unit_scale=True,
             unit_divisor=1024,
