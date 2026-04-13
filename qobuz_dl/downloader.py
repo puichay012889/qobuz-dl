@@ -35,6 +35,10 @@ DEFAULT_TRACK = "{tracknumber}. {tracktitle}"
 
 logger = logging.getLogger(__name__)
 
+# Module-level download speed limit in bytes/sec.  0 = unlimited.
+# Set by cli.py from --limit-rate flag.
+_rate_limit_bps = 0
+
 # Human-readable translations for Qobuz API restriction codes
 _RESTRICTION_LABELS = {
     "TrackRestrictedByPurchaseCredentials": "purchase required",
@@ -614,10 +618,19 @@ def _tqdm_download_once(url, fname, desc, resume_from=0):
             ),
             ncols=120,
         ) as bar:
+            _rl_start = time.monotonic()
+            _rl_bytes = 0
             for data in r.iter_content(chunk_size=1024):
                 size = file.write(data)
                 bar.update(size)
                 download_size += size
+                # Rate limiting
+                if _rate_limit_bps > 0:
+                    _rl_bytes += size
+                    _rl_elapsed = time.monotonic() - _rl_start
+                    _rl_expected = _rl_bytes / _rate_limit_bps
+                    if _rl_expected > _rl_elapsed:
+                        time.sleep(_rl_expected - _rl_elapsed)
     except requests.exceptions.RequestException as e:
         # Catches ChunkedEncodingError (IncompleteRead), ConnectionError, etc.
         raise ConnectionError(f"Download interrupted for {fname}: {e}") from e

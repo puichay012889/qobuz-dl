@@ -237,6 +237,22 @@ def main():
         concurrent_downloads=getattr(arguments, "workers", 1),
     )
 
+    # Apply download speed limit if specified
+    limit_rate = getattr(arguments, "limit_rate", None)
+    if limit_rate:
+        from qobuz_dl import downloader
+        rate_str = limit_rate.strip().upper()
+        try:
+            if rate_str.endswith("M"):
+                downloader._rate_limit_bps = float(rate_str[:-1]) * 1024 * 1024
+            elif rate_str.endswith("K"):
+                downloader._rate_limit_bps = float(rate_str[:-1]) * 1024
+            else:
+                downloader._rate_limit_bps = float(rate_str)
+            logger.info(f"Download speed limited to {limit_rate}/s")
+        except ValueError:
+            logger.warning(f"{YELLOW}Invalid --limit-rate value: {limit_rate}. Ignoring.")
+
     if arguments.command == "oauth":
         if not app_id:
             bundle = Bundle()

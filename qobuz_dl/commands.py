@@ -60,6 +60,12 @@ def dl_args(subparsers):
         type=int,
         help="number of parallel track downloads per album (default: 1)",
     )
+    download.add_argument(
+        "--limit-rate",
+        metavar="RATE",
+        default=None,
+        help="limit download speed, e.g. '5M' for 5 MB/s, '500K' for 500 KB/s",
+    )
     return download
 
 
