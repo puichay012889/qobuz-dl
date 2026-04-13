@@ -288,10 +288,13 @@ class Download:
             MAX_SAFE_WORKERS = 6
             calculated_workers = min(os.cpu_count() or 4, track_count, MAX_SAFE_WORKERS)
             max_workers = max(calculated_workers, 1)
-            if max_workers > 1:
-                logger.info(f"{YELLOW}Auto-scaling workers: {max_workers} threads allocated for {track_count} track(s)")
+            mode_str = "Auto-scale"
         else:
             max_workers = self.concurrent_downloads
+            mode_str = "Manual"
+
+        if max_workers > 1 or mode_str == "Auto-scale":
+            logger.info(f"{OFF}Threads allocated: {max_workers} worker(s) for {track_count} track(s) [{mode_str}]")
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_worker, i): i for i in tracks}
