@@ -76,7 +76,7 @@ class QobuzDL:
         self.folder_format = folder_format
         self.track_format = track_format
         self.smart_discography = smart_discography
-        self.concurrent_downloads = max(1, int(concurrent_downloads))
+        self.concurrent_downloads = int(concurrent_downloads)
 
     def initialize_client(self, email, pwd, app_id, secrets):
         self.client = qopy.Client(email, pwd, app_id, secrets)
