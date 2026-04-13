@@ -43,9 +43,7 @@ def _reset_config(config_file, use_token=False):
     if choice == "1":
         email, password, user_id, user_auth_token = "", "", "", ""
         logging.info(
-            f"{YELLOW}OAuth selected. After setup, run:\n"
-            f"  qobuz-dl oauth\n"
-            f"to complete authentication."
+            f"{YELLOW}OAuth selected. After setup, it will automatically open your browser to login."
         )
     elif choice == "2":
         email, password = "", ""
@@ -72,7 +70,7 @@ def _reset_config(config_file, use_token=False):
     )
 
     # --- Fetch tokens ---
-    logging.info(f"{YELLOW}Getting tokens. Please wait...")
+    logging.info(f"{YELLOW}Extracting App ID and API Secrets from Qobuz Web Player. Please wait...")
     bundle = Bundle()
     app_id = str(bundle.get_app_id())
     secrets = ",".join(bundle.get_secrets().values())
@@ -192,6 +190,7 @@ def _reset_config(config_file, use_token=False):
         "Edit the file anytime, or override with CLI flags.\n"
         "Run 'qobuz-dl -sc' to view your current config."
     )
+    return choice
 
 
 def _remove_leftovers(directory):
@@ -350,7 +349,20 @@ def main():
             )
 
     if arguments.reset:
-        sys.exit(_reset_config(CONFIG_FILE))
+        choice = _reset_config(CONFIG_FILE)
+        if choice == "1":
+            # Auto-trigger OAuth flow
+            config.read(CONFIG_FILE)
+            app_id = config["DEFAULT"].get("app_id")
+            secrets = [s for s in config["DEFAULT"].get("secrets", "").split(",") if s]
+            private_key = config["DEFAULT"].get("private_key", "")
+            
+            qobuz = QobuzDL(arguments.directory, arguments.quality)
+            qobuz.app_id = app_id
+            qobuz.secrets = secrets
+            qobuz.private_key = private_key
+            qobuz.handle_oauth_login(getattr(arguments, "code", None))
+        sys.exit(0)
 
     if arguments.show_config:
         print(f"Configuation: {CONFIG_FILE}\nDatabase: {QOBUZ_DB}\n---")
