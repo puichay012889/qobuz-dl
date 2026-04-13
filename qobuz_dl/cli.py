@@ -94,6 +94,8 @@ def _reset_config(config_file, use_token=False):
     config["DEFAULT"]["folder_format"] = DEFAULT_FOLDER
     config["DEFAULT"]["track_format"] = DEFAULT_TRACK
     config["DEFAULT"]["smart_discography"] = "false"
+    config["DEFAULT"]["workers"] = "1"
+    config["DEFAULT"]["limit_rate"] = ""
     with open(config_file, "w") as configfile:
         config.write(configfile)
     logging.info(
@@ -189,6 +191,8 @@ def main():
         smart_discography = config.getboolean("DEFAULT", "smart_discography")
         folder_format = config["DEFAULT"]["folder_format"]
         track_format = config["DEFAULT"]["track_format"]
+        cfg_workers = config["DEFAULT"].get("workers", "1")
+        cfg_limit_rate = config["DEFAULT"].get("limit_rate", "")
 
         secrets = [
             secret for secret in config["DEFAULT"]["secrets"].split(",") if secret
@@ -263,11 +267,11 @@ def main():
         folder_format=arguments.folder_format or folder_format,
         track_format=arguments.track_format or track_format,
         smart_discography=arguments.smart_discography or smart_discography,
-        concurrent_downloads=getattr(arguments, "workers", 1),
+        concurrent_downloads=getattr(arguments, "workers", None) or int(cfg_workers),
     )
 
-    # Apply download speed limit if specified
-    limit_rate = getattr(arguments, "limit_rate", None)
+    # Apply download speed limit: CLI flag overrides config
+    limit_rate = getattr(arguments, "limit_rate", None) or cfg_limit_rate or None
     if limit_rate:
         from qobuz_dl import downloader
         rate_str = limit_rate.strip().upper()
