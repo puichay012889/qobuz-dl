@@ -1,2 +1,26 @@
 Qobuz Downloads
-__pycache__
+
+# Python build and packaging
+build/
+dist/
+*.egg-info/
+*.egg
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+qobuz-env/
+
+# qobuz-dl temp files
+*.tmp
+
+# IDE / OS specific
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
