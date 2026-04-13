@@ -94,6 +94,19 @@ pip install windows-curses
 pip install .
 ```
 
+### Upgrading
+
+When new changes are available in this repository, you can update your local installation:
+
+```bash
+# 1. Pull the latest code
+git pull origin main
+
+# 2. Reinstall depending on your method:
+pipx install --force .         # If you used pipx
+pip install --upgrade .        # If you used venv / Windows (ensure venv is active)
+```
+
 ### Initial Setup
 
 ```bash
