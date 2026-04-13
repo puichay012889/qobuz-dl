@@ -250,6 +250,11 @@ class Download:
             with self._count_lock:
                 count = counter[0]
                 counter[0] += 1
+            # Stagger API requests to reduce Akamai throttling risk
+            stagger = count * 0.5
+            if stagger > 0:
+                logger.debug(f"Worker {count}: stagger delay {stagger:.1f}s")
+                time.sleep(stagger)
             try:
                 parse, actual_q = self._get_track_url_with_fallback(
                     i["id"], self.quality
