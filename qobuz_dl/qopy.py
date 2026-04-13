@@ -145,6 +145,8 @@ class Client:
             )
         else:
             r = self.session.get(self.base + epoint, params=params)
+
+        logger.debug(f"API {epoint} → HTTP {r.status_code}")
         if epoint == "user/login":
             if r.status_code == 401:
                 raise AuthenticationError("Invalid credentials.\n" + RESET)
@@ -272,6 +274,7 @@ class Client:
         # 1. FAST PATH: try the direct URL first
         if not force_segments:
             try:
+                logger.debug(f"get_track_url: trying direct URL for track {id}, fmt {fmt_id}")
                 track = self.api_call("track/getFileUrl", id=id, fmt_id=fmt_id)
                 # Always return what the API says — even without a "url" key.
                 # A missing "url" means a format restriction or sample, NOT an
@@ -290,7 +293,9 @@ class Client:
                     self.session_infos = session["infos"]
                     self.session_key = self._derive_session_key()
                     self.session.headers.update({"X-Session-Id": self.session_id})
+                    logger.debug(f"Session started: {self.session_id}")
 
+        logger.debug(f"get_track_url: trying segmented file/url for track {id}, fmt {fmt_id}")
         track = self.api_call("file/url", id=id, fmt_id=fmt_id)
         # Normalise field names returned by the new endpoint
         if "bits_depth" in track and "bit_depth" not in track:

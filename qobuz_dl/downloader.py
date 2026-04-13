@@ -101,6 +101,7 @@ class Download:
         parse = self.client.get_track_url(track_id, fmt_id=fmt_id)
 
         if not self.downgrade_quality:
+            logger.debug(f"Quality fallback disabled for track {track_id}")
             return parse, int(fmt_id)
 
         # Check if we got a usable response
@@ -123,6 +124,7 @@ class Download:
             else -1
         )
         for lower_q in _QUALITY_FALLBACK_CHAIN[current_idx + 1:]:
+            logger.debug(f"Trying quality {lower_q} for track {track_id}")
             parse = self.client.get_track_url(track_id, fmt_id=lower_q)
             if "sample" not in parse and parse.get("sampling_rate"):
                 logger.info(
@@ -507,6 +509,10 @@ def tqdm_download(url, fname, desc, max_retries=3):
             os.path.getsize(fname)
             if attempt > 0 and os.path.isfile(fname)
             else 0
+        )
+        logger.debug(
+            f"Download attempt {attempt + 1}/{max_retries} for {desc} "
+            f"(resume={resume_from})"
         )
         try:
             _tqdm_download_once(url, fname, desc, resume_from=resume_from)

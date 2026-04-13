@@ -12,10 +12,7 @@ from qobuz_dl.core import QobuzDL
 from qobuz_dl.downloader import DEFAULT_FOLDER, DEFAULT_TRACK
 from qobuz_dl.exceptions import InvalidAppSecretError
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-)
+logger = logging.getLogger(__name__)
 
 if os.name == "nt":
     OS_CONFIG = os.environ.get("APPDATA")
@@ -127,6 +124,24 @@ def _initial_checks():
 
 def main():
     _initial_checks()
+
+    # Parse args early to get verbosity flags before any logging
+    # (use a pre-parse to extract -v/-Q before full config-aware parse)
+    pre_parser = qobuz_dl_args()
+    pre_args, _ = pre_parser.parse_known_args()
+
+    # Configure logging level based on flags
+    if getattr(pre_args, "verbose", False):
+        log_level = logging.DEBUG
+        log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    elif getattr(pre_args, "quiet", False):
+        log_level = logging.ERROR
+        log_format = "%(message)s"
+    else:
+        log_level = logging.INFO
+        log_format = "%(message)s"
+
+    logging.basicConfig(level=log_level, format=log_format, force=True)
 
     config = configparser.ConfigParser()
     config.read(CONFIG_FILE)

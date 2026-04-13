@@ -178,6 +178,20 @@ def qobuz_dl_args(
         help="show configuration",
     )
 
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="show debug messages (API calls, retries, fallback details)",
+    )
+    verbosity.add_argument(
+        "-Q",
+        "--quiet",
+        action="store_true",
+        help="show only errors (no progress, no info messages)",
+    )
+
     subparsers = parser.add_subparsers(
         title="commands",
         description="run qobuz-dl <command> --help for more info\n(e.g. qobuz-dl fun --help)",
