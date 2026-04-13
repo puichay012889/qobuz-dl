@@ -194,6 +194,35 @@ def main():
             secret for secret in config["DEFAULT"]["secrets"].split(",") if secret
         ]
         private_key = config["DEFAULT"].get("private_key", "")
+
+        # --- Config Validation ---
+        valid_qualities = {"5", "6", "7", "27"}
+        if default_quality not in valid_qualities:
+            logging.warning(
+                f"{YELLOW}Invalid quality '{default_quality}' in config. "
+                f"Must be one of {valid_qualities}. Falling back to 6 (FLAC)."
+            )
+            default_quality = "6"
+
+        if not app_id:
+            logging.warning(
+                f"{YELLOW}app_id is empty in config. "
+                "Run 'qobuz-dl -r' to regenerate."
+            )
+
+        if not secrets:
+            logging.warning(
+                f"{YELLOW}No secrets found in config. "
+                "Run 'qobuz-dl -r' to regenerate."
+            )
+
+        has_creds = (email and password) or (user_id and user_auth_token)
+        if not has_creds:
+            logging.info(
+                f"{YELLOW}No credentials configured. "
+                "Run 'qobuz-dl -r' or 'qobuz-dl oauth' to set up authentication."
+            )
+
         arguments = qobuz_dl_args(
             default_quality, default_limit, default_folder
         ).parse_args()

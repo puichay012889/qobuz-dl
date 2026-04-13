@@ -192,10 +192,14 @@ class QobuzDL:
                 ]
 
             logger.info(f"{YELLOW}{len(items)} downloads in queue")
-            for item in items:
+            for idx, item in enumerate(items, 1):
+                item_title = item.get("title", item.get("name", ""))
+                is_album = type_dict["iterable_key"] == "albums"
+                kind = "Album" if is_album else "Track"
+                logger.info(f"\n{YELLOW}[{kind} {idx}/{len(items)}] {item_title}")
                 self.download_from_id(
                     item["id"],
-                    True if type_dict["iterable_key"] == "albums" else False,
+                    is_album,
                     new_path,
                 )
             if url_type == "playlist" and not self.no_m3u_for_playlists:
