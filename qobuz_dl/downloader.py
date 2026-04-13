@@ -460,21 +460,51 @@ class Download:
             with active_lock:
                 active_state["count"] += 1
             slot = slot_allocator.get_slot()
-            # Stagger API requests to reduce Akamai throttling risk
-            stagger = count * 0.5
-            if stagger > 0:
-                logger.debug(f"Worker {count}: stagger delay {stagger:.1f}s")
-                time.sleep(stagger)
+            slot_position = slot + worker_position_offset
+
+            track_num = i.get("track_number", count + 1)
+            track_prefix = f"[{track_num:02d}/{track_count:02d}]"
+            track_artist = _safe_get(i, "performer", "name")
+            track_title = i.get("title", f"track {i.get('id', '?')}")
+            slot_desc_raw = (
+                f"{track_prefix} {track_artist} - {track_title}"
+                if track_artist else f"{track_prefix} {track_title}"
+            )
+            slot_desc = _fit_progress_desc(slot_desc_raw, compact_ui)
+
             try:
-                parse, actual_q = self._get_track_url_with_fallback(
-                    i["id"], self.quality
-                )
+                # Placeholder between completed tagging and next transfer start.
+                with tqdm(
+                    total=1,
+                    desc=slot_desc,
+                    position=slot_position,
+                    leave=False,
+                    bar_format=_build_postprocess_bar_format(
+                        compact_ui,
+                        OFF + CYAN,
+                        "queued",
+                    ),
+                    dynamic_ncols=True,
+                    mininterval=_TQDM_MININTERVAL,
+                    maxinterval=_TQDM_MAXINTERVAL,
+                ) as queued_bar:
+                    # Stagger API requests to reduce Akamai throttling risk
+                    stagger = count * 0.5
+                    if stagger > 0:
+                        logger.debug(f"Worker {count}: stagger delay {stagger:.1f}s")
+                        time.sleep(stagger)
+
+                    parse, actual_q = self._get_track_url_with_fallback(
+                        i["id"], self.quality
+                    )
+                    queued_bar.update(1)
+
                 if "sample" not in parse and parse.get("sampling_rate"):
                     is_mp3 = True if int(actual_q) == 5 else False
                     self._download_and_tag(
                         dirn, count, parse, i, meta, False, is_mp3,
                         i["media_number"] if is_multiple else None,
-                        position=slot + worker_position_offset,
+                        position=slot_position,
                         leave=False,
                     )
                     return "downloaded"
