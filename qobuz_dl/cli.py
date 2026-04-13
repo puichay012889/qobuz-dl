@@ -3,6 +3,7 @@ import hashlib
 import logging
 import glob
 import os
+import shutil
 import sys
 
 from qobuz_dl.bundle import Bundle
@@ -236,6 +237,22 @@ def _initial_checks():
         sys.exit(qobuz_dl_args().print_help())
 
 
+def _check_dependencies():
+    missing = []
+    if not shutil.which("ffmpeg"):
+        missing.append("ffmpeg (required for Akamai-bypassed hi-res streams)")
+    if not shutil.which("flac"):
+        missing.append("flac (required for FLAC integrity checks)")
+    
+    if missing:
+        logger.warning(f"{YELLOW}Warning: External dependencies missing!")
+        for dep in missing:
+            logger.warning(f"{YELLOW}- {dep}")
+        logger.warning(
+            f"{YELLOW}Please install them to enable all features. See README.md for instructions.\n"
+        )
+
+
 def main():
     _initial_checks()
 
@@ -256,6 +273,8 @@ def main():
         log_format = "%(message)s"
 
     logging.basicConfig(level=log_level, format=log_format, force=True)
+    
+    _check_dependencies()
 
     config = configparser.ConfigParser()
     config.read(CONFIG_FILE)
