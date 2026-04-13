@@ -168,6 +168,21 @@ def _fit_progress_desc(desc: str, compact: Optional[bool] = None) -> str:
     return _ellipsis_middle(desc, desc_width).ljust(desc_width)
 
 
+def _clear_progress_slot(position: int) -> None:
+    """Force-clear a tqdm slot to avoid stale blank rows after transitions."""
+    with tqdm(
+        total=0,
+        desc="",
+        position=position,
+        leave=False,
+        bar_format="{desc}\033[K",
+        dynamic_ncols=True,
+        mininterval=_TQDM_MININTERVAL,
+        maxinterval=_TQDM_MAXINTERVAL,
+    ) as clear_bar:
+        clear_bar.refresh()
+
+
 def _format_master_progress(
     done: int,
     total: int,
@@ -487,6 +502,7 @@ class Download:
                         i["id"], self.quality
                     )
                     queued_bar.update(1)
+                    queued_bar.clear()
 
                 if "sample" not in parse and parse.get("sampling_rate"):
                     is_mp3 = True if int(actual_q) == 5 else False
@@ -507,6 +523,7 @@ class Download:
                 logger.error(f"{RED}Failed to download '{track_title}': {exc}")
                 return "failed"
             finally:
+                _clear_progress_slot(slot_position)
                 with active_lock:
                     active_state["count"] -= 1
 
