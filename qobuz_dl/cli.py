@@ -10,6 +10,7 @@ from qobuz_dl.color import GREEN, RED, YELLOW
 from qobuz_dl.commands import qobuz_dl_args
 from qobuz_dl.core import QobuzDL
 from qobuz_dl.downloader import DEFAULT_FOLDER, DEFAULT_TRACK
+from qobuz_dl.exceptions import InvalidAppSecretError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -209,13 +210,60 @@ def main():
         return
 
     if user_id and user_auth_token:
-        qobuz.initialize_client_with_token(user_id, user_auth_token, app_id, secrets)
+        _init_client(qobuz, "token", user_id, user_auth_token, app_id, secrets, config)
     elif email and password:
-        qobuz.initialize_client(email, password, app_id, secrets)
+        _init_client(qobuz, "password", email, password, app_id, secrets, config)
     else:
         logger.error(f"{RED}No credentials found. Run 'qobuz-dl -r' to set up.")
+        return
 
     _handle_commands(qobuz, arguments)
+
+
+def _init_client(qobuz, method, primary, secondary, app_id, secrets, config):
+    """Initialize the Qobuz client, auto-refreshing the bundle on stale secrets."""
+    try:
+        if method == "token":
+            qobuz.initialize_client_with_token(primary, secondary, app_id, secrets)
+        else:
+            qobuz.initialize_client(primary, secondary, app_id, secrets)
+    except InvalidAppSecretError:
+        logger.info(
+            f"{YELLOW}App secrets are stale. Refreshing from Qobuz web player..."
+        )
+        try:
+            bundle = Bundle()
+            new_app_id = str(bundle.get_app_id())
+            new_secrets = [s for s in bundle.get_secrets().values() if s]
+            new_private_key = bundle.get_private_key() or ""
+            # persist the new tokens to config.ini so next run is fast
+            _update_bundle_in_config(new_app_id, new_secrets, new_private_key)
+            logger.info(f"{GREEN}Bundle refreshed. Retrying...")
+            if method == "token":
+                qobuz.initialize_client_with_token(
+                    primary, secondary, new_app_id, new_secrets
+                )
+            else:
+                qobuz.initialize_client(primary, secondary, new_app_id, new_secrets)
+        except Exception as e:
+            logger.error(
+                f"{RED}Bundle refresh failed: {e}. "
+                "Run 'qobuz-dl -r' to reset your config."
+            )
+            raise
+
+
+def _update_bundle_in_config(app_id, secrets, private_key):
+    """Persist refreshed bundle values to config.ini without wiping other settings."""
+    import configparser
+    cfg = configparser.ConfigParser()
+    cfg.read(CONFIG_FILE)
+    cfg["DEFAULT"]["app_id"] = app_id
+    cfg["DEFAULT"]["secrets"] = ",".join(secrets)
+    cfg["DEFAULT"]["private_key"] = private_key
+    with open(CONFIG_FILE, "w") as f:
+        cfg.write(f)
+    logger.info(f"{GREEN}config.ini updated with new bundle tokens.")
 
 
 if __name__ == "__main__":

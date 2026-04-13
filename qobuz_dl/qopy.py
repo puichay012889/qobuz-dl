@@ -45,6 +45,8 @@ class Client:
         self.session_id = None
         self.session_infos = None
         self.session_key = None
+        self._auth_method = None   # 'password' | 'token' — used by reauth()
+        self._auth_creds = {}
         if not skip_auth:
             self.auth(email, pwd)
             self.cfg_setup()
@@ -153,9 +155,28 @@ class Client:
             and r.status_code == 400
         ):
             raise InvalidAppSecretError(f"Invalid app secret: {r.json()}.\n" + RESET)
+        elif r.status_code == 401 and epoint != "user/login" and not kwargs.get("_retried"):
+            result = self._call_retry_auth(epoint, **kwargs)
+            if result is not None:
+                return result
 
         r.raise_for_status()
         return r.json()
+
+    def _call_retry_auth(self, epoint, **kwargs):
+        """Re-authenticate and retry *epoint* once on a 401 response."""
+        if not self._auth_method:
+            return None
+        logger.info(f"{YELLOW}Session expired. Attempting re-authentication...")
+        try:
+            self.reauth()
+            # mark as retry so we don't loop infinitely
+            kwargs["_retried"] = True
+            return self.api_call(epoint, **kwargs)
+        except Exception as e:
+            raise AuthenticationError(
+                f"Re-authentication failed: {e}. Run 'qobuz-dl oauth' to log in again."
+            ) from e
 
     def auth(self, email, pwd):
         usr_info = self.api_call("user/login", email=email, pwd=pwd)
@@ -165,6 +186,9 @@ class Client:
         self.session.headers.update({"X-User-Auth-Token": self.uat})
         self.label = usr_info["user"]["credential"]["parameters"]["short_label"]
         logger.info(f"{GREEN}Membership: {self.label}")
+        # store for potential reauth
+        self._auth_method = "password"
+        self._auth_creds = {"email": email, "pwd": pwd}
 
     def auth_with_token(self, user_id, user_auth_token):
         params = {
@@ -186,6 +210,27 @@ class Client:
         self.label = usr_info["user"]["credential"]["parameters"]["short_label"]
         logger.info(f"{GREEN}Membership: {self.label}")
         self.cfg_setup()
+        # store for potential reauth
+        self._auth_method = "token"
+        self._auth_creds = {"user_id": user_id, "user_auth_token": user_auth_token}
+
+    def reauth(self):
+        """Re-authenticate using stored credentials.
+
+        Called automatically by api_call when a 401 is received.
+        Reset session state so a fresh session/start cycle can run.
+        """
+        self.session_id = None
+        self.session_key = None
+        self.session_infos = None
+        if self._auth_method == "token":
+            self.auth_with_token(**self._auth_creds)
+        elif self._auth_method == "password":
+            self.auth(**self._auth_creds)
+            self.cfg_setup()
+        else:
+            raise AuthenticationError("No credentials stored for re-authentication.")
+
 
     def multi_meta(self, epoint, key, id, type):
         total = 1
