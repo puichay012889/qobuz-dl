@@ -636,8 +636,9 @@ def _tqdm_download_once(url, fname, desc, resume_from=0):
                 + "{rate_fmt} "
                 + "ETA {remaining} "
                 + "\u2502 {desc}"
+                + "\033[K"
             ),
-            ncols=120,
+            dynamic_ncols=True,
         ) as bar:
             _rl_start = time.monotonic()
             _rl_bytes = 0
@@ -688,8 +689,9 @@ def tqdm_download_segments(track_url_dict, fname, desc):
                 + "{rate_fmt} "
                 + "ETA {remaining} "
                 + "\u2502 {desc} [seg]"
+                + "\033[K"
             ),
-            ncols=120,
+            dynamic_ncols=True,
         ) as bar:
             for segment in range(track_url_dict["n_segments"] + 1):
                 r = requests.get(
