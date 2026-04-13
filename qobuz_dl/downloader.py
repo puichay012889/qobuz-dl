@@ -469,9 +469,11 @@ class Download:
     def _get_filename_attr(artist, track_metadata, track_title):
         return {
             "artist": artist,
-            "albumartist": _safe_get(
+            "albumartist": sanitize_filename(_safe_get(
                 track_metadata, "album", "artist", "name", default=artist
-            ),
+            )),
+            "album": sanitize_filename(_safe_get(track_metadata, "album", "title", default="Unknown Album")),
+            "year": _safe_get(track_metadata, "album", "release_date_original", default="").split("-")[0],
             "bit_depth": track_metadata["maximum_bit_depth"],
             "sampling_rate": track_metadata["maximum_sampling_rate"],
             "tracktitle": track_title,
@@ -484,6 +486,7 @@ class Download:
         return {
             "album": sanitize_filename(meta["album"]["title"]),
             "artist": sanitize_filename(meta["album"]["artist"]["name"]),
+            "albumartist": sanitize_filename(meta["album"]["artist"]["name"]),
             "tracktitle": track_title,
             "year": meta["album"]["release_date_original"].split("-")[0],
             "bit_depth": bit_depth,
@@ -494,6 +497,7 @@ class Download:
     def _get_album_attr(meta, album_title, file_format, bit_depth, sampling_rate):
         return {
             "artist": sanitize_filename(meta["artist"]["name"]),
+            "albumartist": sanitize_filename(meta["artist"]["name"]),
             "album": sanitize_filename(album_title),
             "year": meta["release_date_original"].split("-")[0],
             "format": file_format,
