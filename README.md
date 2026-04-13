@@ -1,156 +1,221 @@
 # qobuz-dl
-Search, explore and download Lossless and Hi-Res music from [Qobuz](https://www.qobuz.com/). It *just works*™ (2025).
-[![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=VZWSWVGZGJRMU&source=url)
+
+Search, explore and download Lossless and Hi-Res music from [Qobuz](https://www.qobuz.com/).
+
+> A modernized fork with OAuth authentication, parallel downloads, quality auto-fallback, and resilient download infrastructure.
 
 ## Features
 
-* Download FLAC and MP3 files from Qobuz
-* Explore and download music directly from your terminal with **interactive** or **lucky** mode
-* Download albums, tracks, artists, playlists and labels with **download** mode
-* Download music from last.fm playlists (Spotify, Apple Music and Youtube playlists are also supported through this method)
-* Queue support on **interactive** mode
-* Effective duplicate handling with own portable database
-* Support for albums with multiple discs
-* Support for M3U playlists
-* Downloads URLs from text file
-* Extended tags
-* And more
+### Core
+- 🎵 Download **FLAC** (16-bit, 24-bit) and **MP3 320** from Qobuz
+- 📀 Download albums, tracks, artists, playlists, and labels
+- 🔍 **Interactive mode** — search and explore from your terminal
+- 🍀 **Lucky mode** — instant download from search query
+- 📝 Download URLs from text files or last.fm playlists
 
-## Getting started
+### Authentication
+- 🔐 **OAuth login** (recommended) — secure browser-based authentication
+- 🔑 **Token-based login** — use `user_id` + `user_auth_token` from web player
+- 📧 Email + password login (deprecated, kept for compatibility)
+- ♻️ **Auto-refresh** — expired tokens and stale app bundles are automatically recovered
 
-> You'll need an **active subscription**
+### Download Engine
+- ⚡ **Parallel downloads** — download multiple tracks simultaneously (`-w 3`)
+- 🔄 **Retry with exponential backoff** — automatic retry on connection failures
+- 📥 **Resume downloads** — interrupted downloads resume from where they left off (HTTP Range)
+- 🛡️ **Akamai bypass** — automatic fallback to segmented download when throttled
+- 📊 **Quality auto-fallback** — if Hi-Res isn't available, automatically tries lower qualities (27 → 7 → 6 → 5)
+- 🐢 **Speed limiting** — cap download bandwidth (`--limit-rate 5M`)
+- ✅ **FLAC integrity check** — validates downloaded files with `flac -t`
+- 🔁 **Smart skip** — re-downloads corrupt/incomplete files instead of skipping them
 
-#### Install qobuz-dl with pip
-##### Linux / MAC OS
-```
+### User Experience
+- 📊 **Rich progress bars** — speed (MB/s), ETA, and track info: `[03/12] Artist - Title`
+- 📋 **Download summary** — color-coded report: `✓ 10 downloaded  ⚠ 2 skipped  ✗ 1 failed`
+- 💬 **Descriptive skip messages** — explains *why* a track was skipped (e.g. "purchase required", "not available in your region")
+- 📈 **Batch progress** — shows overall progress for large collections: `[Album 3/15] Title`
+- 🔇 **Verbosity control** — `--verbose` for debug output, `--quiet` for errors only
+
+### Organization
+- 📁 Customizable folder and track naming patterns
+- 💿 Multi-disc album support
+- 🏷️ Extended metadata tagging (composer, ISRC, label, genre, copyright)
+- 🖼️ Cover art download and embedding
+- 📜 M3U playlist generation
+- 🗄️ Duplicate detection via portable database
+
+## Getting Started
+
+> **Requirement:** An active Qobuz subscription.
+
+### Install
+
+```bash
+# Linux / macOS
 pip3 install --upgrade qobuz-dl
-```
-##### Windows
-```
+
+# Windows
 pip3 install windows-curses
 pip3 install --upgrade qobuz-dl
 ```
-#### Run qobuz-dl and enter your credentials
-##### Linux / MAC OS
-```
-qobuz-dl
-```
-##### Windows
-```
-qobuz-dl.exe
-```
 
-> If something fails, run `qobuz-dl -r` to reset your config file.
+### Initial Setup
 
-## Examples
-
-### Download mode
-Download URL in 24B<96khz quality
-```
-qobuz-dl dl https://play.qobuz.com/album/qxjbxh1dc3xyb -q 7
-```
-Download multiple URLs to custom directory
-```
-qobuz-dl dl https://play.qobuz.com/artist/2038380 https://play.qobuz.com/album/ip8qjy1m6dakc -d "Some pop from 2020"
-```
-Download multiple URLs from text file
-```
-qobuz-dl dl this_txt_file_has_urls.txt
-```
-Download albums from a label and also embed cover art images into the downloaded files
-```
-qobuz-dl dl https://play.qobuz.com/label/7526 --embed-art
-```
-Download a Qobuz playlist in maximum quality
-```
-qobuz-dl dl https://play.qobuz.com/playlist/5388296 -q 27
-```
-Download all the music from an artist except singles, EPs and VA releases
-```
-qobuz-dl dl https://play.qobuz.com/artist/2528676 --albums-only
-```
-
-#### Last.fm playlists
-> Last.fm has a new feature for creating playlists: you can create your own based on the music you listen to or you can import one from popular streaming services like Spotify, Apple Music and Youtube. Visit: `https://www.last.fm/user/<your profile>/playlists` (e.g. https://www.last.fm/user/vitiko98/playlists) to get started.
-
-Download a last.fm playlist in the maximum quality
-```
-qobuz-dl dl https://www.last.fm/user/vitiko98/playlists/11887574 -q 27
-```
-
-Run `qobuz-dl dl --help` for more info.
-
-### Interactive mode
-Run interactive mode with a limit of 10 results
-```
-qobuz-dl fun -l 10
-```
-Type your search query
-```
-Logging...
-Logged: OK
-Membership: Studio
-
-
-Enter your search: [Ctrl + c to quit]
-- fka twigs magdalene
-```
-`qobuz-dl` will bring up a nice list of releases. Now choose whatever releases you want to download (everything else is interactive).
-
-Run `qobuz-dl fun --help` for more info.
-
-### Lucky mode
-Download the first album result
-```
-qobuz-dl lucky playboi carti die lit
-```
-Download the first 5 artist results
-```
-qobuz-dl lucky joy division -n 5 --type artist
-```
-Download the first 3 track results in 320 quality
-```
-qobuz-dl lucky eric dolphy remastered --type track -n 3 -q 5
-```
-Download the first track result without cover art
-```
-qobuz-dl lucky jay z story of oj --type track --no-cover
-```
-
-Run `qobuz-dl lucky --help` for more info.
-
-### Other
-Reset your config file
-```
+```bash
+# Create config file (interactive wizard)
 qobuz-dl -r
 ```
 
-By default, `qobuz-dl` will skip already downloaded items by ID with the message `This release ID ({item_id}) was already downloaded`. To avoid this check, add the flag `--no-db` at the end of a command. In extreme cases (e.g. lost collection), you can run `qobuz-dl -p` to completely reset the database.
+The wizard will ask you to choose an authentication method:
 
-## Usage
 ```
-usage: qobuz-dl [-h] [-r] {fun,dl,lucky} ...
-
-The ultimate Qobuz music downloader.
-See usage examples on https://github.com/vitiko98/qobuz-dl
-
-optional arguments:
-  -h, --help      show this help message and exit
-  -r, --reset     create/reset config file
-  -p, --purge     purge/delete downloaded-IDs database
-
-commands:
-  run qobuz-dl <command> --help for more info
-  (e.g. qobuz-dl fun --help)
-
-  {fun,dl,lucky}
-    fun           interactive mode
-    dl            input mode
-    lucky         lucky mode
+Choose authentication method:
+  [1] OAuth (recommended — opens Qobuz login in browser)
+  [2] Token (user_id + user_auth_token from web player)
+  [3] Email + Password (deprecated — may not work)
 ```
 
-## Module usage 
-Using `qobuz-dl` as a module is really easy. Basically, the only thing you need is `QobuzDL` from `core`.
+For OAuth (recommended), complete authentication with:
+
+```bash
+qobuz-dl oauth
+```
+
+## Usage Examples
+
+### Download Mode (`dl`)
+
+Download an album in Hi-Res quality:
+```bash
+qobuz-dl dl https://play.qobuz.com/album/qxjbxh1dc3xyb -q 27
+```
+
+Download with 3 parallel workers and speed limit:
+```bash
+qobuz-dl dl https://play.qobuz.com/album/qxjbxh1dc3xyb -w 3 --limit-rate 5M
+```
+
+Download multiple URLs to a custom directory:
+```bash
+qobuz-dl dl https://play.qobuz.com/artist/2038380 https://play.qobuz.com/album/ip8qjy1m6dakc -d "Some pop from 2020"
+```
+
+Download from a text file containing URLs:
+```bash
+qobuz-dl dl urls.txt
+```
+
+Download a label's catalog with embedded cover art:
+```bash
+qobuz-dl dl https://play.qobuz.com/label/7526 --embed-art
+```
+
+Download an artist's discography (albums only, skip singles/EPs):
+```bash
+qobuz-dl dl https://play.qobuz.com/artist/2528676 --albums-only -s
+```
+
+Download a last.fm playlist:
+```bash
+qobuz-dl dl https://www.last.fm/user/vitiko98/playlists/11887574 -q 27
+```
+
+> **Tip:** last.fm supports importing playlists from Spotify, Apple Music, and YouTube. Visit `https://www.last.fm/user/<your-profile>/playlists`.
+
+### Interactive Mode (`fun`)
+
+```bash
+qobuz-dl fun -l 10
+```
+
+Search, browse results interactively, and queue downloads — all from your terminal.
+
+### Lucky Mode (`lucky`)
+
+```bash
+# Download first album result
+qobuz-dl lucky playboi carti die lit
+
+# Download first 5 artist results
+qobuz-dl lucky joy division -n 5 --type artist
+
+# Download first 3 tracks in MP3 320
+qobuz-dl lucky eric dolphy remastered --type track -n 3 -q 5
+```
+
+### Debug & Troubleshooting
+
+```bash
+# Verbose mode — see API calls, retries, fallback decisions
+qobuz-dl -v dl https://play.qobuz.com/album/...
+
+# Quiet mode — errors only
+qobuz-dl -Q dl https://play.qobuz.com/album/...
+
+# View current config
+qobuz-dl -sc
+
+# Reset config file
+qobuz-dl -r
+
+# Reset download database
+qobuz-dl -p
+```
+
+## Configuration
+
+All CLI flags can be set as persistent defaults in the config file (`~/.config/qobuz-dl/config.ini` on Linux).
+
+Run `qobuz-dl -sc` to view your current config, or `qobuz-dl -r` to regenerate it with the interactive wizard.
+
+### Config Reference
+
+| Config Key | CLI Flag | Default | Description |
+|---|---|---|---|
+| `default_folder` | `-d` | `Qobuz Downloads` | Download directory |
+| `default_quality` | `-q` | `6` | Audio quality (5/6/7/27) |
+| `default_limit` | `-l` | `20` | Search result limit (fun mode) |
+| `folder_format` | `-ff` | `{artist} - {album}...` | Album folder naming pattern |
+| `track_format` | `-tf` | `{tracknumber}. {tracktitle}` | Track file naming pattern |
+| `albums_only` | `--albums-only` | `false` | Skip singles/EPs/VA |
+| `no_m3u` | `--no-m3u` | `false` | Skip .m3u generation |
+| `no_fallback` | `--no-fallback` | `false` | Disable quality fallback |
+| `embed_art` | `-e` | `false` | Embed cover art in files |
+| `og_cover` | `--og-cover` | `false` | Original quality cover art |
+| `no_cover` | `--no-cover` | `false` | Skip cover art download |
+| `no_database` | `--no-db` | `false` | Don't track downloads in DB |
+| `smart_discography` | `-s` | `false` | Filter spam in discographies |
+| `workers` | `-w` | `1` | Parallel download workers |
+| `limit_rate` | `--limit-rate` | *(unlimited)* | Speed limit (e.g. `5M`, `500K`) |
+| `lucky_type` | `-t` | `album` | Lucky mode search type |
+| `lucky_number` | `-n` | `1` | Lucky mode result count |
+
+### Quality Values
+
+| Value | Format | Description |
+|---|---|---|
+| `5` | MP3 | 320 kbps |
+| `6` | FLAC | 16-bit / 44.1 kHz (CD quality) |
+| `7` | FLAC | 24-bit ≤ 96 kHz |
+| `27` | FLAC | 24-bit > 96 kHz (Hi-Res) |
+
+### Naming Pattern Keys
+
+Available variables for `folder_format` and `track_format`:
+
+| Key | Example |
+|---|---|
+| `{artist}` | Pink Floyd |
+| `{albumartist}` | Pink Floyd |
+| `{album}` | The Dark Side of the Moon |
+| `{year}` | 1973 |
+| `{tracktitle}` | Time |
+| `{tracknumber}` | 04 |
+| `{bit_depth}` | 24 |
+| `{sampling_rate}` | 96 |
+| `{version}` | Remastered |
+
+## Module Usage
 
 ```python
 import logging
@@ -158,20 +223,34 @@ from qobuz_dl.core import QobuzDL
 
 logging.basicConfig(level=logging.INFO)
 
-email = "your@email.com"
-password = "your_password"
-
 qobuz = QobuzDL()
-qobuz.get_tokens() # get 'app_id' and 'secrets' attrs
+qobuz.get_tokens()  # get 'app_id' and 'secrets' attrs
 qobuz.initialize_client(email, password, qobuz.app_id, qobuz.secrets)
 
 qobuz.handle_url("https://play.qobuz.com/album/va4j3hdlwaubc")
 ```
 
-Attributes, methods and parameters have been named as self-explanatory as possible.
+## Architecture
 
-## A note about Qo-DL
-`qobuz-dl` is inspired in the discontinued Qo-DL-Reborn. This tool uses two modules from Qo-DL: `qopy` and `spoofer`, both written by Sorrow446 and DashLt.
+```
+qobuz_dl/
+├── cli.py          # CLI entry point, config management, logging setup
+├── commands.py     # Argument parser definitions
+├── core.py         # QobuzDL orchestrator (URL routing, batch downloads)
+├── qopy.py         # Qobuz API client (auth, track URLs, metadata)
+├── downloader.py   # Download engine (parallel, retry, resume, fallback)
+├── metadata.py     # FLAC/MP3 tagging (mutagen)
+├── bundle.py       # App ID / secrets extraction from Qobuz web player
+├── color.py        # Terminal color codes
+├── db.py           # Download history database
+└── spoofbuz.py     # Bundle spoofer utilities
+```
+
+## Credits
+
+`qobuz-dl` is inspired by the discontinued Qo-DL-Reborn. This tool uses modules originally from Qo-DL: `qopy` and `spoofer`, both written by Sorrow446 and DashLt.
+
 ## Disclaimer
-* This tool was written for educational purposes. I will not be responsible if you use this program in bad faith. By using it, you are accepting the [Qobuz API Terms of Use](https://static.qobuz.com/apps/api/QobuzAPI-TermsofUse.pdf).
-* `qobuz-dl` is not affiliated with Qobuz
+
+- This tool was written for educational purposes. I will not be responsible if you use this program in bad faith. By using it, you are accepting the [Qobuz API Terms of Use](https://static.qobuz.com/apps/api/QobuzAPI-TermsofUse.pdf).
+- `qobuz-dl` is not affiliated with Qobuz.
