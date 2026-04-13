@@ -149,13 +149,14 @@ def _build_transfer_bar_format(compact: bool, segmented: bool = False) -> str:
     )
 
 
-def _build_postprocess_bar_format(compact: bool, color: str) -> str:
+def _build_postprocess_bar_format(compact: bool, color: str, status: str) -> str:
+    status_col = f"{status:<9}"
     if compact:
         return (
             color
             + "{n_fmt}/{total_fmt} "
             + f"|{{bar:{_progress_bar_width(compact)}}}| "
-            + "\u2502 {desc}"
+            + f"{status_col} \u2502 {{desc}}"
             + RESET
             + "\033[K"
         )
@@ -164,7 +165,7 @@ def _build_postprocess_bar_format(compact: bool, color: str) -> str:
         + "{n_fmt}/{total_fmt} "
         + f"|{{bar:{_progress_bar_width(compact)}}}| "
         + "{percentage:3.0f}% "
-        + "\u2502 {desc}"
+        + f"{status_col} \u2502 {{desc}}"
         + RESET
         + "\033[K"
     )
@@ -731,19 +732,18 @@ class Download:
 
         show_postprocess_status = position is not None and not leave
         if show_postprocess_status:
-            def _postprocess_desc(status: str) -> str:
-                return _fit_progress_desc(f"{status} | {dl_desc_raw}", compact_ui)
-
             post_steps = ["tagging"] if is_mp3 else ["verifying", "tagging"]
+            current_status = post_steps[0]
             initial_post_color = GREEN if is_mp3 else YELLOW
             with tqdm(
                 total=len(post_steps),
-                desc=_postprocess_desc(post_steps[0]),
+                desc=dl_desc,
                 position=position,
                 leave=False,
                 bar_format=_build_postprocess_bar_format(
                     compact_ui,
                     initial_post_color,
+                    current_status,
                 ),
                 dynamic_ncols=True,
                 mininterval=_TQDM_MININTERVAL,
@@ -752,11 +752,12 @@ class Download:
                 if not is_mp3:
                     _run_integrity_check()
                     post_bar.update(1)
+                    current_status = "tagging"
                     post_bar.bar_format = _build_postprocess_bar_format(
                         compact_ui,
                         GREEN,
+                        current_status,
                     )
-                    post_bar.set_description_str(_postprocess_desc("tagging"))
                     post_bar.refresh()
                 _run_tagging()
                 post_bar.update(1)
