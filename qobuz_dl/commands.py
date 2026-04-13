@@ -17,7 +17,7 @@ def fun_args(subparsers, default_limit):
     return interactive
 
 
-def lucky_args(subparsers):
+def lucky_args(subparsers, default_type="album", default_number=1):
     lucky = subparsers.add_parser(
         "lucky",
         description="Download the first <n> albums returned from a Qobuz search.",
@@ -26,15 +26,15 @@ def lucky_args(subparsers):
     lucky.add_argument(
         "-t",
         "--type",
-        default="album",
-        help="type of items to search (artist, album, track, playlist) (default: album)",
+        default=default_type,
+        help=f"type of items to search (artist, album, track, playlist) (default: {default_type})",
     )
     lucky.add_argument(
         "-n",
         "--number",
         metavar="int",
-        default=1,
-        help="number of results to download (default: 1)",
+        default=default_number,
+        help=f"number of results to download (default: {default_number})",
     )
     lucky.add_argument("QUERY", nargs="+", help="search query")
     return lucky
@@ -158,7 +158,8 @@ def add_common_arg(custom_parser, default_folder, default_quality):
 
 
 def qobuz_dl_args(
-    default_quality=6, default_limit=20, default_folder="Qobuz Downloads"
+    default_quality=6, default_limit=20, default_folder="Qobuz Downloads",
+    default_lucky_type="album", default_lucky_number=1,
 ):
     parser = argparse.ArgumentParser(
         prog="qobuz-dl",
@@ -206,7 +207,7 @@ def qobuz_dl_args(
 
     interactive = fun_args(subparsers, default_limit)
     download = dl_args(subparsers)
-    lucky = lucky_args(subparsers)
+    lucky = lucky_args(subparsers, default_lucky_type, default_lucky_number)
     oauth = oauth_args(subparsers)
     [
         add_common_arg(i, default_folder, default_quality)

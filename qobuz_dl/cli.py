@@ -96,6 +96,8 @@ def _reset_config(config_file, use_token=False):
     config["DEFAULT"]["smart_discography"] = "false"
     config["DEFAULT"]["workers"] = "1"
     config["DEFAULT"]["limit_rate"] = ""
+    config["DEFAULT"]["lucky_type"] = "album"
+    config["DEFAULT"]["lucky_number"] = "1"
     with open(config_file, "w") as configfile:
         config.write(configfile)
     logging.info(
@@ -193,6 +195,8 @@ def main():
         track_format = config["DEFAULT"]["track_format"]
         cfg_workers = config["DEFAULT"].get("workers", "1")
         cfg_limit_rate = config["DEFAULT"].get("limit_rate", "")
+        cfg_lucky_type = config["DEFAULT"].get("lucky_type", "album")
+        cfg_lucky_number = config["DEFAULT"].get("lucky_number", "1")
 
         secrets = [
             secret for secret in config["DEFAULT"]["secrets"].split(",") if secret
@@ -228,7 +232,9 @@ def main():
             )
 
         arguments = qobuz_dl_args(
-            default_quality, default_limit, default_folder
+            default_quality, default_limit, default_folder,
+            default_lucky_type=cfg_lucky_type,
+            default_lucky_number=int(cfg_lucky_number),
         ).parse_args()
     except (KeyError, UnicodeDecodeError, configparser.Error) as error:
         arguments = qobuz_dl_args().parse_args()
