@@ -1,6 +1,7 @@
 import logging
 import os
 import subprocess
+import time
 from typing import Tuple
 
 import requests
@@ -327,7 +328,34 @@ class Download:
             return ("Unknown", quality_met, None, None)
 
 
-def tqdm_download(url, fname, desc):
+def tqdm_download(url, fname, desc, max_retries=3):
+    """Download *url* to *fname* with automatic retry + exponential backoff.
+
+    Retries up to *max_retries* times (waits 1s → 2s → 4s between attempts)
+    before raising ConnectionError, which triggers the Akamai segmented
+    fallback in _download_and_tag.
+    """
+    for attempt in range(max_retries):
+        try:
+            _tqdm_download_once(url, fname, desc)
+            return  # success
+        except ConnectionError as exc:
+            if attempt < max_retries - 1:
+                wait = 2 ** attempt  # 1 s, 2 s, 4 s
+                logger.info(
+                    f"{YELLOW}Download interrupted (attempt {attempt + 1}/{max_retries}). "
+                    f"Retrying in {wait}s..."
+                )
+                time.sleep(wait)
+                # remove partial file before retry
+                if os.path.isfile(fname):
+                    os.remove(fname)
+            else:
+                raise  # all retries exhausted → propagate to Akamai fallback
+
+
+def _tqdm_download_once(url, fname, desc):
+    """Single download attempt — called by tqdm_download."""
     try:
         r = requests.get(url, allow_redirects=True, stream=True)
         r.raise_for_status()
@@ -354,9 +382,7 @@ def tqdm_download(url, fname, desc):
         raise ConnectionError(f"Download interrupted for {fname}: {e}") from e
 
     if total and total != download_size:
-        # https://stackoverflow.com/questions/69919912/requests-iter-content-thinks-file-is-complete-but-its-not
         raise ConnectionError("File download was interrupted for " + fname)
-
 
 def tqdm_download_segments(track_url_dict, fname, desc):
     """Download an Akamai-segmented track, decrypt each segment with AES-CTR,
