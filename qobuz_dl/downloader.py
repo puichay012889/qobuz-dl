@@ -16,6 +16,8 @@ from qobuz_dl.color import OFF, GREEN, RED, YELLOW, CYAN, RESET
 from qobuz_dl.exceptions import NonStreamable
 
 QL_DOWNGRADE = "FormatRestrictedByFormatAvailability"
+# Quality fallback chain: try each level in order until one works
+_QUALITY_FALLBACK_CHAIN = [27, 7, 6, 5]
 # used in case of error
 DEFAULT_FORMATS = {
     "MP3": [
@@ -89,6 +91,48 @@ class Download:
         self.track_format = track_format or DEFAULT_TRACK
         self.concurrent_downloads = 1  # set by caller; > 1 enables parallel mode
         self._count_lock = threading.Lock()  # protects the tmp-file counter
+
+    def _get_track_url_with_fallback(self, track_id, fmt_id):
+        """Try *fmt_id* first; if format-restricted AND quality_fallback is
+        on, walk down the quality chain until a downloadable URL is found.
+
+        Returns (parse_dict, actual_quality) tuple.
+        """
+        parse = self.client.get_track_url(track_id, fmt_id=fmt_id)
+
+        if not self.downgrade_quality:
+            return parse, int(fmt_id)
+
+        # Check if we got a usable response
+        if "sample" not in parse and parse.get("sampling_rate") and "url" in parse:
+            return parse, int(fmt_id)
+
+        # Only fallback on format restriction, not purchase/geo restrictions
+        restrictions = parse.get("restrictions", [])
+        is_format_restricted = any(
+            r.get("code") == QL_DOWNGRADE
+            for r in restrictions if isinstance(r, dict)
+        )
+        if not is_format_restricted:
+            return parse, int(fmt_id)  # not a format issue — don't retry
+
+        # Walk down the quality chain
+        current_idx = (
+            _QUALITY_FALLBACK_CHAIN.index(int(fmt_id))
+            if int(fmt_id) in _QUALITY_FALLBACK_CHAIN
+            else -1
+        )
+        for lower_q in _QUALITY_FALLBACK_CHAIN[current_idx + 1:]:
+            parse = self.client.get_track_url(track_id, fmt_id=lower_q)
+            if "sample" not in parse and parse.get("sampling_rate"):
+                logger.info(
+                    f"{YELLOW}Quality {fmt_id} unavailable, "
+                    f"fell back to {lower_q}"
+                )
+                return parse, lower_q
+
+        # All qualities exhausted — return last response for skip handling
+        return parse, int(fmt_id)
 
     def download_id_by_type(self, track=True):
         if not track:
@@ -173,9 +217,11 @@ class Download:
         stats = {"downloaded": 0, "skipped": 0, "failed": 0}
         for count, i in enumerate(tracks):
             try:
-                parse = self.client.get_track_url(i["id"], fmt_id=self.quality)
-                if "sample" not in parse and parse["sampling_rate"]:
-                    is_mp3 = True if int(self.quality) == 5 else False
+                parse, actual_q = self._get_track_url_with_fallback(
+                    i["id"], self.quality
+                )
+                if "sample" not in parse and parse.get("sampling_rate"):
+                    is_mp3 = True if int(actual_q) == 5 else False
                     self._download_and_tag(
                         dirn, count, parse, i, meta, False, is_mp3,
                         i["media_number"] if is_multiple else None,
@@ -203,9 +249,11 @@ class Download:
                 count = counter[0]
                 counter[0] += 1
             try:
-                parse = self.client.get_track_url(i["id"], fmt_id=self.quality)
-                if "sample" not in parse and parse["sampling_rate"]:
-                    is_mp3 = True if int(self.quality) == 5 else False
+                parse, actual_q = self._get_track_url_with_fallback(
+                    i["id"], self.quality
+                )
+                if "sample" not in parse and parse.get("sampling_rate"):
+                    is_mp3 = True if int(actual_q) == 5 else False
                     self._download_and_tag(
                         dirn, count, parse, i, meta, False, is_mp3,
                         i["media_number"] if is_multiple else None,
@@ -234,7 +282,9 @@ class Download:
         return stats
 
     def download_track(self):
-        parse = self.client.get_track_url(self.item_id, self.quality)
+        parse, actual_q = self._get_track_url_with_fallback(
+            self.item_id, self.quality
+        )
 
         if "sample" not in parse and parse["sampling_rate"]:
             meta = self.client.get_track_meta(self.item_id)
@@ -269,7 +319,7 @@ class Download:
                     dirn,
                     og_quality=self.cover_og_quality,
                 )
-            is_mp3 = True if int(self.quality) == 5 else False
+            is_mp3 = True if int(actual_q) == 5 else False
             self._download_and_tag(
                 dirn,
                 1,
