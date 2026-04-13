@@ -96,6 +96,13 @@ def _progress_bar_width(compact: bool) -> int:
     return _COMPACT_BAR_WIDTH if compact else _WIDE_BAR_WIDTH
 
 
+def _progress_desc_width(compact: bool) -> int:
+    cols = _terminal_columns()
+    reserve = 42 if compact else 64
+    max_len = 48 if compact else 52
+    return max(20, min(max_len, cols - reserve))
+
+
 def _build_master_bar_format(compact: bool) -> str:
     if compact:
         return (
@@ -153,11 +160,12 @@ def _build_postprocess_bar_format(compact: bool) -> str:
     )
 
 
-def _fit_progress_desc(desc: str) -> str:
-    # Keep per-track description stable and avoid wraps in narrower terminals.
-    cols = _terminal_columns()
-    max_desc_len = max(24, min(72, cols // 2))
-    return _ellipsis_middle(desc, max_desc_len)
+def _fit_progress_desc(desc: str, compact: Optional[bool] = None) -> str:
+    # Keep progress rows table-like: same description column width at all states.
+    if compact is None:
+        compact = _is_compact_progress_layout()
+    desc_width = _progress_desc_width(compact)
+    return _ellipsis_middle(desc, desc_width).ljust(desc_width)
 
 
 def _format_master_progress(
@@ -625,11 +633,12 @@ class Download:
             track_prefix = f"[{track_num:02d}/{total_tracks:02d}]"
         else:
             track_prefix = f"[{track_num:02d}]"
+        compact_ui = _is_compact_progress_layout()
         dl_desc_raw = (
             f"{track_prefix} {artist} - {track_title}"
             if artist else f"{track_prefix} {track_title}"
         )
-        dl_desc = _fit_progress_desc(dl_desc_raw)
+        dl_desc = _fit_progress_desc(dl_desc_raw, compact_ui)
 
         if "url" in track_url_dict:
             try:
@@ -712,11 +721,13 @@ class Download:
 
         show_postprocess_status = position is not None and not leave
         if show_postprocess_status:
-            compact_ui = _is_compact_progress_layout()
             post_steps = ["tagging"] if is_mp3 else ["verifying", "tagging"]
             with tqdm(
                 total=len(post_steps),
-                desc=_fit_progress_desc(f"{dl_desc_raw} | {post_steps[0]}"),
+                desc=_fit_progress_desc(
+                    f"{dl_desc_raw} | {post_steps[0]}",
+                    compact_ui,
+                ),
                 position=position,
                 leave=False,
                 bar_format=_build_postprocess_bar_format(compact_ui),
@@ -728,7 +739,10 @@ class Download:
                     _run_integrity_check()
                     post_bar.update(1)
                     post_bar.set_description_str(
-                        _fit_progress_desc(f"{dl_desc_raw} | tagging")
+                        _fit_progress_desc(
+                            f"{dl_desc_raw} | tagging",
+                            compact_ui,
+                        )
                     )
                 _run_tagging()
                 post_bar.update(1)
