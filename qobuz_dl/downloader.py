@@ -42,6 +42,9 @@ _rate_limit_bps = 0
 _TQDM_MININTERVAL = 0.12
 _TQDM_MAXINTERVAL = 0.80
 _TQDM_SMOOTHING = 0.10
+_COMPACT_PROGRESS_COLS = 96
+_WIDE_BAR_WIDTH = 25
+_COMPACT_BAR_WIDTH = 14
 
 # Human-readable translations for Qobuz API restriction codes
 _RESTRICTION_LABELS = {
@@ -81,9 +84,78 @@ def _ellipsis_middle(text: str, max_len: int) -> str:
     return f"{text[:head_len]}...{text[-tail_len:]}"
 
 
+def _terminal_columns() -> int:
+    return shutil.get_terminal_size((120, 24)).columns
+
+
+def _is_compact_progress_layout() -> bool:
+    return _terminal_columns() <= _COMPACT_PROGRESS_COLS
+
+
+def _progress_bar_width(compact: bool) -> int:
+    return _COMPACT_BAR_WIDTH if compact else _WIDE_BAR_WIDTH
+
+
+def _build_master_bar_format(compact: bool) -> str:
+    if compact:
+        return (
+            GREEN
+            + "{desc} "
+            + f"|{{bar:{_progress_bar_width(compact)}}}| "
+            + "{n_fmt}/{total_fmt}"
+            + RESET
+            + "\033[K"
+        )
+    return (
+        GREEN
+        + "{desc} "
+        + f"|{{bar:{_progress_bar_width(compact)}}}| "
+        + "{percentage:3.0f}% "
+        + "{n_fmt}/{total_fmt}"
+        + RESET
+        + "\033[K"
+    )
+
+
+def _build_transfer_bar_format(compact: bool, segmented: bool = False) -> str:
+    seg_suffix = " [seg]" if segmented else ""
+    if compact:
+        return (
+            CYAN
+            + "{n_fmt}/{total_fmt} "
+            + f"|{{bar:{_progress_bar_width(compact)}}}| "
+            + "{percentage:3.0f}% "
+            + "\u2502 {desc}"
+            + seg_suffix
+            + "\033[K"
+        )
+    return (
+        CYAN
+        + "{n_fmt}/{total_fmt} "
+        + f"|{{bar:{_progress_bar_width(compact)}}}| "
+        + "{percentage:3.0f}% "
+        + "{rate_fmt} "
+        + "ETA {remaining} "
+        + "\u2502 {desc}"
+        + seg_suffix
+        + "\033[K"
+    )
+
+
+def _build_postprocess_bar_format(compact: bool) -> str:
+    return (
+        CYAN
+        + "{desc} "
+        + f"|{{bar:{_progress_bar_width(compact)}}}| "
+        + "{n_fmt}/{total_fmt}"
+        + RESET
+        + "\033[K"
+    )
+
+
 def _fit_progress_desc(desc: str) -> str:
     # Keep per-track description stable and avoid wraps in narrower terminals.
-    cols = shutil.get_terminal_size((120, 24)).columns
+    cols = _terminal_columns()
     max_desc_len = max(24, min(72, cols // 2))
     return _ellipsis_middle(desc, max_desc_len)
 
@@ -95,14 +167,18 @@ def _format_master_progress(
     skipped: int = 0,
     failed: int = 0,
     active: int = 0,
+    compact: bool = False,
 ) -> str:
     width = max(2, len(str(max(total, 0))))
+    label_ok, label_sk, label_er, label_act = ("o", "s", "e", "a") if compact else (
+        "ok", "sk", "er", "act"
+    )
     return (
         f"[{done:0{width}d}/{total:0{width}d}] "
-        f"ok:{downloaded:0{width}d} "
-        f"sk:{skipped:0{width}d} "
-        f"er:{failed:0{width}d} "
-        f"act:{active:0{width}d}"
+        f"{label_ok}:{downloaded:0{width}d} "
+        f"{label_sk}:{skipped:0{width}d} "
+        f"{label_er}:{failed:0{width}d} "
+        f"{label_act}:{active:0{width}d}"
     )
 
 
@@ -339,6 +415,7 @@ class Download:
         active_lock = threading.Lock()
         slot_allocator = WorkerSlotAllocator(max_workers)
         track_count = len(tracks)
+        compact_ui = _is_compact_progress_layout()
         # Worker slots are fixed to 0..max_workers-1.
         # Leave one spacer row after workers, then render the master bar.
         worker_position_offset = 0
@@ -351,16 +428,8 @@ class Download:
                 position=master_position,
                 leave=True,
                 dynamic_ncols=True,
-                desc=_format_master_progress(0, track_count),
-                bar_format=(
-                    GREEN
-                    + "{desc} "
-                    + "|{bar:25}| "
-                    + "{percentage:3.0f}% "
-                    + "{n_fmt}/{total_fmt}"
-                    + RESET
-                    + "\033[K"
-                ),
+                desc=_format_master_progress(0, track_count, compact=compact_ui),
+                bar_format=_build_master_bar_format(compact_ui),
                 mininterval=_TQDM_MININTERVAL,
                 maxinterval=_TQDM_MAXINTERVAL,
             )
@@ -431,6 +500,7 @@ class Download:
                                 skipped=stats["skipped"],
                                 failed=stats["failed"],
                                 active=active_count,
+                                compact=compact_ui,
                             )
                         )
                         master_bar.update(1)
@@ -642,20 +712,14 @@ class Download:
 
         show_postprocess_status = position is not None and not leave
         if show_postprocess_status:
+            compact_ui = _is_compact_progress_layout()
             post_steps = ["tagging"] if is_mp3 else ["verifying", "tagging"]
             with tqdm(
                 total=len(post_steps),
                 desc=_fit_progress_desc(f"{dl_desc_raw} | {post_steps[0]}"),
                 position=position,
                 leave=False,
-                bar_format=(
-                    CYAN
-                    + "{desc} "
-                    + "|{bar:25}| "
-                    + "{n_fmt}/{total_fmt}"
-                    + RESET
-                    + "\033[K"
-                ),
+                bar_format=_build_postprocess_bar_format(compact_ui),
                 dynamic_ncols=True,
                 mininterval=_TQDM_MININTERVAL,
                 maxinterval=_TQDM_MAXINTERVAL,
@@ -833,6 +897,7 @@ def _tqdm_download_once(
     total = content_length + resume_from
     download_size = resume_from
     file_mode = "ab" if resume_from else "wb"
+    compact_ui = _is_compact_progress_layout()
 
     try:
         with open(fname, file_mode) as file, tqdm(
@@ -845,16 +910,7 @@ def _tqdm_download_once(
             position=position,
             leave=leave,
             disable=not show_progress,
-            bar_format=(
-                CYAN
-                + "{n_fmt}/{total_fmt} "
-                + "|{bar:25}| "
-                + "{percentage:3.0f}% "
-                + "{rate_fmt} "
-                + "ETA {remaining} "
-                + "\u2502 {desc}"
-                + "\033[K"
-            ),
+            bar_format=_build_transfer_bar_format(compact_ui),
             dynamic_ncols=True,
             mininterval=_TQDM_MININTERVAL,
             maxinterval=_TQDM_MAXINTERVAL,
@@ -900,6 +956,7 @@ def tqdm_download_segments(
         )
         r.raise_for_status()
         total += int(r.headers.get("content-length", 0))
+    compact_ui = _is_compact_progress_layout()
 
     try:
         with open(tmp_fname, "wb") as file, tqdm(
@@ -910,16 +967,7 @@ def tqdm_download_segments(
             desc=desc,
             position=position,
             leave=leave,
-            bar_format=(
-                CYAN
-                + "{n_fmt}/{total_fmt} "
-                + "|{bar:25}| "
-                + "{percentage:3.0f}% "
-                + "{rate_fmt} "
-                + "ETA {remaining} "
-                + "\u2502 {desc} [seg]"
-                + "\033[K"
-            ),
+            bar_format=_build_transfer_bar_format(compact_ui, segmented=True),
             dynamic_ncols=True,
             mininterval=_TQDM_MININTERVAL,
             maxinterval=_TQDM_MAXINTERVAL,
