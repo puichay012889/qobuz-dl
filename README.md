@@ -210,8 +210,8 @@ Run `qobuz-dl -sc` to view your current config, or `qobuz-dl -r` to regenerate i
 | `default_folder` | `-d` | `Qobuz Downloads` | Download directory |
 | `default_quality` | `-q` | `6` | Audio quality (5/6/7/27) |
 | `default_limit` | `-l` | `20` | Search result limit (fun mode) |
-| `folder_format` | `-ff` | `{artist} - {album}...` | Album folder naming pattern |
-| `track_format` | `-tf` | `{tracknumber}. {tracktitle}` | Track file naming pattern |
+| `folder_format` | `-ff` | `{albumartist}/{album}...` | Album folder naming pattern |
+| `track_format` | `-tf` | `{tracknumber} - {tracktitle}` | Track file naming pattern |
 | `albums_only` | `--albums-only` | `false` | Skip singles/EPs/VA |
 | `no_m3u` | `--no-m3u` | `false` | Skip .m3u generation |
 | `no_fallback` | `--no-fallback` | `false` | Disable quality fallback |

@@ -21,17 +21,17 @@ _QUALITY_FALLBACK_CHAIN = [27, 7, 6, 5]
 # used in case of error
 DEFAULT_FORMATS = {
     "MP3": [
-        "{artist} - {album} ({year}) [MP3]",
-        "{tracknumber}. {tracktitle}",
+        "{albumartist}/{album} ({year}) [MP3]",
+        "{tracknumber} - {tracktitle}",
     ],
     "Unknown": [
-        "{artist} - {album}",
-        "{tracknumber}. {tracktitle}",
+        "{albumartist}/{album}",
+        "{tracknumber} - {tracktitle}",
     ],
 }
 
-DEFAULT_FOLDER = "{artist} - {album} ({year}) [{bit_depth}B-{sampling_rate}kHz]"
-DEFAULT_TRACK = "{tracknumber}. {tracktitle}"
+DEFAULT_FOLDER = "{albumartist}/{album} ({year}) [{bit_depth}B-{sampling_rate}kHz]"
+DEFAULT_TRACK = "{tracknumber} - {tracktitle}"
 
 logger = logging.getLogger(__name__)
 
