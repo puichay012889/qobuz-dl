@@ -376,8 +376,21 @@ class Download:
         final_file = os.path.join(root_dir, formatted_path)[:250] + extension
 
         if os.path.isfile(final_file):
-            logger.info(f"{OFF}{track_title} was already downloaded")
-            return
+            file_size = os.path.getsize(final_file)
+            # Audio files should be at least 10KB; smaller means corrupt/incomplete
+            if file_size > 10240:
+                logger.info(f"{OFF}{track_title} was already downloaded")
+                return
+            else:
+                logger.info(
+                    f"{YELLOW}{track_title} exists but looks incomplete "
+                    f"({file_size} bytes), re-downloading"
+                )
+                os.remove(final_file)
+
+        # Clean up any orphaned tmp file from a previous interrupted download
+        if os.path.isfile(filename):
+            os.remove(filename)
 
         # Build a rich progress bar description: [03/12] Artist - Track Title
         total_tracks = (
