@@ -16,7 +16,7 @@ from pathvalidate import sanitize_filename
 from qobuz_dl.bundle import Bundle
 from qobuz_dl import downloader, qopy
 from qobuz_dl.color import CYAN, GREEN, OFF, RED, YELLOW, DF, RESET
-from qobuz_dl.exceptions import NonStreamable
+from qobuz_dl.exceptions import NonStreamable, QobuzApiError
 from qobuz_dl.db import create_db, handle_download_id
 from qobuz_dl.utils import (
     get_url_info,
@@ -38,6 +38,17 @@ QUALITIES = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+def _format_qobuz_api_reason(exc: QobuzApiError) -> str:
+    details = [f"[{exc.category}] {exc.description}"]
+    details.append(f"HTTP {exc.status_code}")
+    if exc.api_code is not None:
+        details.append(f"api_code={exc.api_code}")
+    if exc.api_message:
+        details.append(f"api_message={exc.api_message}")
+    details.append(f"endpoint={exc.endpoint}")
+    return " | ".join(details)
 
 
 class QobuzDL:
@@ -123,6 +134,26 @@ class QobuzDL:
                 "to bypass this."
             )
             return
+
+        item_kind = "album" if album else "track"
+        preflight_meta = None
+        try:
+            if album:
+                preflight_meta = self.client.get_album_meta(item_id)
+            else:
+                preflight_meta = self.client.get_track_meta(item_id)
+        except QobuzApiError as exc:
+            logger.error(
+                f"{RED}Skipping {item_kind} {item_id}: "
+                f"{_format_qobuz_api_reason(exc)}"
+            )
+            return
+        except requests.exceptions.RequestException as exc:
+            logger.error(
+                f"{RED}Unable to validate {item_kind} {item_id}: {exc}. Skipping..."
+            )
+            return
+
         try:
             dloader = downloader.Download(
                 self.client,
@@ -136,10 +167,16 @@ class QobuzDL:
                 self.no_cover,
                 self.folder_format,
                 self.track_format,
+                prefetched_meta=preflight_meta,
             )
             dloader.concurrent_downloads = self.concurrent_downloads
             dloader.download_id_by_type(not album)
             handle_download_id(self.downloads_db, item_id, add_id=True)
+        except QobuzApiError as exc:
+            logger.error(
+                f"{RED}Skipping {item_kind} {item_id}: "
+                f"{_format_qobuz_api_reason(exc)}"
+            )
         except (requests.exceptions.RequestException, NonStreamable) as e:
             logger.error(f"{RED}Error getting release: {e}. Skipping...")
 

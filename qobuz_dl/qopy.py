@@ -19,12 +19,95 @@ from qobuz_dl.exceptions import (
     InvalidAppIdError,
     InvalidAppSecretError,
     InvalidQuality,
+    QobuzApiError,
 )
 from qobuz_dl.color import GREEN, YELLOW
 
 RESET = "Reset your credentials with 'qobuz-dl -r'"
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_error_payload(response):
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            return payload
+    except ValueError:
+        pass
+    return {}
+
+
+def _categorize_api_failure(epoint, status_code, api_message):
+    msg = (api_message or "").lower()
+    catalog_endpoints = {
+        "album/get",
+        "track/get",
+        "playlist/get",
+        "artist/get",
+        "label/get",
+    }
+
+    if status_code == 404 and epoint in catalog_endpoints:
+        return (
+            "RESOURCE_NOT_FOUND",
+            "Requested item ID is not available in Qobuz catalog for this account/region.",
+        )
+    if status_code == 401:
+        return (
+            "AUTH_REQUIRED",
+            "Session/auth token is invalid or expired; re-authentication is required.",
+        )
+    if status_code == 403:
+        return (
+            "ACCESS_DENIED",
+            "Access denied for this endpoint with current account permissions.",
+        )
+    if status_code == 429:
+        return (
+            "RATE_LIMITED",
+            "Too many API requests; retry after a short cooldown.",
+        )
+    if status_code == 400 and "app_id" in msg:
+        return (
+            "INVALID_APP_ID",
+            "Invalid or missing app_id provided to Qobuz API.",
+        )
+    if status_code == 400:
+        return (
+            "INVALID_REQUEST",
+            "Request parameters/signature are invalid for this endpoint.",
+        )
+    if status_code >= 500:
+        return (
+            "QOBUZ_SERVER_ERROR",
+            "Qobuz service returned a server error; retry may succeed.",
+        )
+
+    return (
+        "API_ERROR",
+        "Unexpected API error response.",
+    )
+
+
+def _build_qobuz_api_error(epoint, response):
+    payload = _extract_error_payload(response)
+    api_message = payload.get("message")
+    api_code = payload.get("code")
+    category, description = _categorize_api_failure(
+        epoint,
+        response.status_code,
+        api_message,
+    )
+    return QobuzApiError(
+        endpoint=epoint,
+        status_code=response.status_code,
+        category=category,
+        description=description,
+        api_message=api_message,
+        api_code=api_code,
+        response=response,
+    )
 
 
 class Client:
@@ -164,7 +247,8 @@ class Client:
             if result is not None:
                 return result
 
-        r.raise_for_status()
+        if not r.ok:
+            raise _build_qobuz_api_error(epoint, r)
         return r.json()
 
     def _call_retry_auth(self, epoint, **kwargs):

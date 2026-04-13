@@ -46,14 +46,28 @@ _COMPACT_PROGRESS_COLS = 96
 _WIDE_BAR_WIDTH = 25
 _COMPACT_BAR_WIDTH = 14
 
-# Human-readable translations for Qobuz API restriction codes
-_RESTRICTION_LABELS = {
-    "TrackRestrictedByPurchaseCredentials": "purchase required",
-    "SampleRestrictedByRightHolders": "sample blocked by rights holder",
-    "FormatRestrictedByFormatAvailability": "format not available",
-    "TrackRestrictedByRightHolders": "blocked by rights holder",
-    "TrackRestrictedByTerritorialAvailability": "not available in your region",
-    "FormatRestrictedByFormatAvailability": "format not available at this quality",
+# Descriptive classification for Qobuz restriction codes.
+_RESTRICTION_DETAILS = {
+    "FormatRestrictedByFormatAvailability": (
+        "QUALITY_UNAVAILABLE",
+        "Requested quality is not available for this track.",
+    ),
+    "TrackRestrictedByPurchaseCredentials": (
+        "PURCHASE_REQUIRED",
+        "Track requires purchase credentials for full download.",
+    ),
+    "SampleRestrictedByRightHolders": (
+        "RIGHTSHOLDER_SAMPLE_ONLY",
+        "Only a sample is available due to rightsholder restrictions.",
+    ),
+    "TrackRestrictedByRightHolders": (
+        "RIGHTSHOLDER_BLOCKED",
+        "Track download is blocked by rightsholder policy.",
+    ),
+    "TrackRestrictedByTerritorialAvailability": (
+        "GEO_RESTRICTED",
+        "Track is unavailable in your current region.",
+    ),
 }
 
 
@@ -61,17 +75,37 @@ def _describe_restrictions(track_url_dict):
     """Return a human-readable string describing why a track was skipped."""
     restrictions = track_url_dict.get("restrictions", [])
     if not restrictions:
-        return "demo/sample"
-    codes = [r.get("code", "unknown") for r in restrictions if isinstance(r, dict)]
-    labels = [_RESTRICTION_LABELS.get(c, c) for c in codes]
-    # deduplicate while preserving order
-    seen = set()
-    unique = []
-    for l in labels:
-        if l not in seen:
-            seen.add(l)
-            unique.append(l)
-    return ", ".join(unique)
+        return "[NO_URL] API did not return a downloadable URL (sample/demo or unavailable item)."
+
+    # Keep order while removing duplicates across repeated codes.
+    seen_codes = set()
+    reasons = []
+    for restriction in restrictions:
+        code = (
+            restriction.get("code", "unknown")
+            if isinstance(restriction, dict)
+            else str(restriction)
+        )
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+
+        category, description = _RESTRICTION_DETAILS.get(
+            code,
+            (
+                "UNKNOWN_RESTRICTION",
+                "Qobuz returned an unrecognized restriction code.",
+            ),
+        )
+        extra_message = ""
+        if isinstance(restriction, dict) and restriction.get("message"):
+            extra_message = f" message={restriction['message']}"
+
+        reasons.append(
+            f"[{category}] {description} (code={code}{extra_message})"
+        )
+
+    return "; ".join(reasons)
 
 
 def _ellipsis_middle(text: str, max_len: int) -> str:
@@ -231,6 +265,7 @@ class Download:
         folder_format=None,
         track_format=None,
         show_master_progress: bool = True,
+        prefetched_meta=None,
     ):
         self.client = client
         self.item_id = item_id
@@ -244,6 +279,7 @@ class Download:
         self.folder_format = folder_format or DEFAULT_FOLDER
         self.track_format = track_format or DEFAULT_TRACK
         self.show_master_progress = show_master_progress
+        self.prefetched_meta = prefetched_meta
         self.concurrent_downloads = 1  # set by caller; > 1 enables parallel mode
         self._count_lock = threading.Lock()  # protects the tmp-file counter
 
@@ -299,7 +335,11 @@ class Download:
 
     def download_release(self):
         count = 0
-        meta = self.client.get_album_meta(self.item_id)
+        meta = (
+            self.prefetched_meta
+            if isinstance(self.prefetched_meta, dict)
+            else self.client.get_album_meta(self.item_id)
+        )
 
         if not meta.get("streamable"):
             raise NonStreamable("This release is not streamable")
@@ -569,7 +609,11 @@ class Download:
         )
 
         if "sample" not in parse and parse["sampling_rate"]:
-            meta = self.client.get_track_meta(self.item_id)
+            meta = (
+                self.prefetched_meta
+                if isinstance(self.prefetched_meta, dict)
+                else self.client.get_track_meta(self.item_id)
+            )
             track_title = _get_title(meta)
             artist = _safe_get(meta, "performer", "name")
             logger.info(f"\n{YELLOW}Downloading: {artist} - {track_title}")
