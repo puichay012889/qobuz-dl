@@ -547,12 +547,15 @@ class Download:
                 leave=leave,
             )
 
-        # Integrity check before tagging
-        if not is_mp3 and os.path.isfile(filename):
+        def _run_integrity_check():
+            # Integrity check before tagging
+            if is_mp3 or not os.path.isfile(filename):
+                return
             try:
                 result = subprocess.run(
                     ["flac", "-t", "-s", filename],
-                    capture_output=True, timeout=60,
+                    capture_output=True,
+                    timeout=60,
                 )
                 if result.returncode != 0:
                     logger.warning(
@@ -566,19 +569,48 @@ class Download:
             except subprocess.TimeoutExpired:
                 logger.debug(f"FLAC integrity check timed out for {track_title}")
 
-        tag_function = metadata.tag_mp3 if is_mp3 else metadata.tag_flac
-        try:
-            tag_function(
-                filename,
-                root_dir,
-                final_file,
-                track_metadata,
-                album_or_track_metadata,
-                is_track,
-                self.embed_art,
-            )
-        except Exception as e:
-            logger.error(f"{RED}Error tagging the file: {e}", exc_info=True)
+        def _run_tagging():
+            tag_function = metadata.tag_mp3 if is_mp3 else metadata.tag_flac
+            try:
+                tag_function(
+                    filename,
+                    root_dir,
+                    final_file,
+                    track_metadata,
+                    album_or_track_metadata,
+                    is_track,
+                    self.embed_art,
+                )
+            except Exception as e:
+                logger.error(f"{RED}Error tagging the file: {e}", exc_info=True)
+
+        show_postprocess_status = position is not None and not leave
+        if show_postprocess_status:
+            post_steps = ["tagging"] if is_mp3 else ["verifying", "tagging"]
+            with tqdm(
+                total=len(post_steps),
+                desc=f"{dl_desc} | {post_steps[0]}",
+                position=position,
+                leave=False,
+                bar_format=(
+                    CYAN
+                    + "{desc} "
+                    + "|{bar:25}| "
+                    + "{n_fmt}/{total_fmt}"
+                    + RESET
+                    + "\033[K"
+                ),
+                dynamic_ncols=True,
+            ) as post_bar:
+                if not is_mp3:
+                    _run_integrity_check()
+                    post_bar.update(1)
+                    post_bar.set_description_str(f"{dl_desc} | tagging")
+                _run_tagging()
+                post_bar.update(1)
+        else:
+            _run_integrity_check()
+            _run_tagging()
 
     @staticmethod
     def _get_filename_attr(artist, track_metadata, track_title):
