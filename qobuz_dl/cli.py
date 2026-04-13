@@ -6,6 +6,8 @@ import os
 import shutil
 import sys
 
+from tqdm import tqdm
+
 from qobuz_dl.bundle import Bundle
 from qobuz_dl.color import GREEN, RED, YELLOW
 from qobuz_dl.commands import qobuz_dl_args
@@ -14,6 +16,16 @@ from qobuz_dl.downloader import DEFAULT_FOLDER, DEFAULT_TRACK
 from qobuz_dl.exceptions import InvalidAppSecretError
 
 logger = logging.getLogger(__name__)
+
+
+class TqdmLoggingHandler(logging.Handler):
+    """Emit log records via tqdm so bars remain stable during downloads."""
+
+    def emit(self, record):
+        try:
+            tqdm.write(self.format(record))
+        except Exception:
+            self.handleError(record)
 
 if os.name == "nt":
     OS_CONFIG = os.environ.get("APPDATA")
@@ -269,7 +281,9 @@ def main():
         log_level = logging.INFO
         log_format = "%(message)s"
 
-    logging.basicConfig(level=log_level, format=log_format, force=True)
+    tqdm_log_handler = TqdmLoggingHandler()
+    tqdm_log_handler.setFormatter(logging.Formatter(log_format))
+    logging.basicConfig(level=log_level, handlers=[tqdm_log_handler], force=True)
     
     _check_dependencies()
 

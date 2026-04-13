@@ -4,7 +4,7 @@ import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Tuple
+from typing import Optional, Tuple
 
 import requests
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -67,6 +67,34 @@ def _describe_restrictions(track_url_dict):
     return ", ".join(unique)
 
 
+def _format_master_progress(done: int, total: int) -> str:
+    width = max(2, len(str(max(total, 0))))
+    return f"[{done:0{width}d}/{total:0{width}d}] tracks done"
+
+
+class WorkerSlotAllocator:
+    """Assign a persistent tqdm row (slot) to each worker thread."""
+
+    def __init__(self, slot_count: int):
+        self._slot_count = max(1, int(slot_count))
+        self._lock = threading.Lock()
+        self._thread_slots = {}
+        self._next_slot = 0
+
+    def get_slot(self) -> int:
+        thread_id = threading.get_ident()
+        with self._lock:
+            slot = self._thread_slots.get(thread_id)
+            if slot is not None:
+                return slot
+            slot = self._next_slot
+            if slot >= self._slot_count:
+                slot %= self._slot_count
+            self._thread_slots[thread_id] = slot
+            self._next_slot += 1
+            return slot
+
+
 class Download:
     def __init__(
         self,
@@ -81,6 +109,7 @@ class Download:
         no_cover: bool = False,
         folder_format=None,
         track_format=None,
+        show_master_progress: bool = True,
     ):
         self.client = client
         self.item_id = item_id
@@ -93,6 +122,7 @@ class Download:
         self.no_cover = no_cover
         self.folder_format = folder_format or DEFAULT_FOLDER
         self.track_format = track_format or DEFAULT_TRACK
+        self.show_master_progress = show_master_progress
         self.concurrent_downloads = 1  # set by caller; > 1 enables parallel mode
         self._count_lock = threading.Lock()  # protects the tmp-file counter
 
@@ -180,7 +210,13 @@ class Download:
             max_workers = max(calculated_workers, 1)
             mode_str = "Auto-scale"
         else:
-            max_workers = self.concurrent_downloads
+            requested_workers = max(1, int(self.concurrent_downloads))
+            max_workers = min(requested_workers, track_count) if track_count else 1
+            if requested_workers != max_workers:
+                logger.debug(
+                    f"Capped workers from {requested_workers} to {max_workers} "
+                    f"for {track_count} track(s)"
+                )
             mode_str = "Manual"
 
         thread_info = ""
@@ -265,12 +301,37 @@ class Download:
         """Parallel download using ThreadPoolExecutor. Returns stats dict."""
         counter = [0]  # mutable container for atomic-style increment
         stats = {"downloaded": 0, "skipped": 0, "failed": 0}
-        stats_lock = threading.Lock()
+        slot_allocator = WorkerSlotAllocator(max_workers)
+        track_count = len(tracks)
+        # Worker slots are fixed to 0..max_workers-1.
+        # Leave one spacer row after workers, then render the master bar.
+        worker_position_offset = 0
+        master_position = max_workers + 1
+
+        master_bar = None
+        if track_count and self.show_master_progress:
+            master_bar = tqdm(
+                total=track_count,
+                position=master_position,
+                leave=True,
+                dynamic_ncols=True,
+                desc=_format_master_progress(0, track_count),
+                bar_format=(
+                    GREEN
+                    + "{desc} "
+                    + "|{bar:25}| "
+                    + "{percentage:3.0f}% "
+                    + "{n_fmt}/{total_fmt}"
+                    + RESET
+                    + "\033[K"
+                ),
+            )
 
         def _worker(i):
             with self._count_lock:
                 count = counter[0]
                 counter[0] += 1
+            slot = slot_allocator.get_slot()
             # Stagger API requests to reduce Akamai throttling risk
             stagger = count * 0.5
             if stagger > 0:
@@ -285,28 +346,45 @@ class Download:
                     self._download_and_tag(
                         dirn, count, parse, i, meta, False, is_mp3,
                         i["media_number"] if is_multiple else None,
+                        position=slot + worker_position_offset,
+                        leave=False,
                     )
-                    with stats_lock:
-                        stats["downloaded"] += 1
+                    return "downloaded"
                 else:
                     reason = _describe_restrictions(parse)
                     title = i.get("title", f"track {i.get('id', '?')}")
                     logger.info(f"{OFF}Skipping '{title}': {reason}")
-                    with stats_lock:
-                        stats["skipped"] += 1
+                    return "skipped"
             except Exception as exc:
                 track_title = i.get("title", i.get("id", "unknown"))
                 logger.error(f"{RED}Failed to download '{track_title}': {exc}")
-                with stats_lock:
-                    stats["failed"] += 1
+                return "failed"
 
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_worker, i): i for i in tracks}
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception:
-                    pass  # already logged inside _worker
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_worker, i): i for i in tracks}
+                for future in as_completed(futures):
+                    status = "failed"
+                    try:
+                        status = future.result()
+                    except Exception:
+                        status = "failed"
+                    if status not in stats:
+                        status = "failed"
+                    stats[status] += 1
+                    if master_bar is not None:
+                        completed = (
+                            stats["downloaded"]
+                            + stats["skipped"]
+                            + stats["failed"]
+                        )
+                        master_bar.set_description_str(
+                            _format_master_progress(completed, track_count)
+                        )
+                        master_bar.update(1)
+        finally:
+            if master_bar is not None:
+                master_bar.close()
         return stats
 
     def download_track(self):
@@ -373,6 +451,8 @@ class Download:
         is_track,
         is_mp3,
         multiple=None,
+        position: Optional[int] = None,
+        leave: bool = True,
     ):
         extension = ".mp3" if is_mp3 else ".flac"
 
@@ -428,7 +508,13 @@ class Download:
         if "url" in track_url_dict:
             try:
                 # 1. FAST PATH: direct URL download
-                tqdm_download(track_url_dict["url"], filename, dl_desc)
+                tqdm_download(
+                    track_url_dict["url"],
+                    filename,
+                    dl_desc,
+                    position=position,
+                    leave=leave,
+                )
             except (ConnectionError, requests.exceptions.ChunkedEncodingError):
                 # Akamai block detected — tqdm_download normalizes all streaming
                 # errors to ConnectionError, but keep ChunkedEncodingError as
@@ -444,10 +530,22 @@ class Download:
                 track_url_dict = self.client.get_track_url(
                     track_id, int(self.quality), force_segments=True
                 )
-                tqdm_download_segments(track_url_dict, filename, dl_desc)
+                tqdm_download_segments(
+                    track_url_dict,
+                    filename,
+                    dl_desc,
+                    position=position,
+                    leave=leave,
+                )
         else:
             # url_template already present — go straight to segmented download
-            tqdm_download_segments(track_url_dict, filename, dl_desc)
+            tqdm_download_segments(
+                track_url_dict,
+                filename,
+                dl_desc,
+                position=position,
+                leave=leave,
+            )
 
         # Integrity check before tagging
         if not is_mp3 and os.path.isfile(filename):
@@ -554,7 +652,14 @@ class Download:
             return ("Unknown", quality_met, None, None)
 
 
-def tqdm_download(url, fname, desc, max_retries=3):
+def tqdm_download(
+    url,
+    fname,
+    desc,
+    max_retries=3,
+    position: Optional[int] = None,
+    leave: bool = True,
+):
     """Download *url* to *fname* with automatic retry, exponential backoff,
     and HTTP Range-based resume.
 
@@ -578,7 +683,14 @@ def tqdm_download(url, fname, desc, max_retries=3):
             f"(resume={resume_from})"
         )
         try:
-            _tqdm_download_once(url, fname, desc, resume_from=resume_from)
+            _tqdm_download_once(
+                url,
+                fname,
+                desc,
+                resume_from=resume_from,
+                position=position,
+                leave=leave,
+            )
             return  # success
         except ConnectionError as exc:
             if attempt < max_retries - 1:
@@ -596,7 +708,14 @@ def tqdm_download(url, fname, desc, max_retries=3):
                 raise
 
 
-def _tqdm_download_once(url, fname, desc, resume_from=0):
+def _tqdm_download_once(
+    url,
+    fname,
+    desc,
+    resume_from=0,
+    position: Optional[int] = None,
+    leave: bool = True,
+):
     """Single download attempt with optional byte-range resume."""
     headers = {}
     if resume_from:
@@ -628,6 +747,8 @@ def _tqdm_download_once(url, fname, desc, resume_from=0):
             unit_scale=True,
             unit_divisor=1024,
             desc=desc,
+            position=position,
+            leave=leave,
             bar_format=(
                 CYAN
                 + "{n_fmt}/{total_fmt} "
@@ -660,7 +781,14 @@ def _tqdm_download_once(url, fname, desc, resume_from=0):
     if total and total != download_size:
         raise ConnectionError("File download was interrupted for " + fname)
 
-def tqdm_download_segments(track_url_dict, fname, desc):
+
+def tqdm_download_segments(
+    track_url_dict,
+    fname,
+    desc,
+    position: Optional[int] = None,
+    leave: bool = True,
+):
     """Download an Akamai-segmented track, decrypt each segment with AES-CTR,
     write a concatenated MP4, then remux to FLAC via ffmpeg."""
     tmp_fname = fname + ".mp4"
@@ -681,6 +809,8 @@ def tqdm_download_segments(track_url_dict, fname, desc):
             unit_scale=True,
             unit_divisor=1024,
             desc=desc,
+            position=position,
+            leave=leave,
             bar_format=(
                 CYAN
                 + "{n_fmt}/{total_fmt} "
