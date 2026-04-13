@@ -294,7 +294,8 @@ class Download:
             mode_str = "Manual"
 
         if max_workers > 1 or mode_str == "Auto-scale":
-            logger.info(f"{OFF}Threads allocated: {max_workers} worker(s) for {track_count} track(s) [{mode_str}]")
+            from qobuz_dl.color import CYAN
+            logger.info(f"{CYAN}Threads allocated: {max_workers} worker(s) for {track_count} track(s) [{mode_str}]")
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_worker, i): i for i in tracks}
