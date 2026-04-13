@@ -273,10 +273,12 @@ class Client:
         if not force_segments:
             try:
                 track = self.api_call("track/getFileUrl", id=id, fmt_id=fmt_id)
-                if "url" in track:
-                    return track
+                # Always return what the API says — even without a "url" key.
+                # A missing "url" means a format restriction or sample, NOT an
+                # Akamai block. The caller already handles this case correctly.
+                return track
             except Exception:
-                pass  # Direct URL failed — fall through to segmented method
+                pass  # API call failed (network/auth) — try segmented path
 
         # 2. FAILSAFE PATH: session-based segmented endpoint (bypasses Akamai)
         # Double-checked locking: only one thread initialises the session.
