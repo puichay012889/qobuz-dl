@@ -468,12 +468,10 @@ class Download:
 
     def download_id_by_type(self, track=True):
         if not track:
-            self.download_release()
-        else:
-            self.download_track()
+            return self.download_release()
+        return self.download_track()
 
     def download_release(self):
-        count = 0
         meta = (
             self.prefetched_meta
             if isinstance(self.prefetched_meta, dict)
@@ -488,7 +486,13 @@ class Download:
             or meta.get("artist").get("name") == "Various Artists"
         ):
             logger.info(f'{OFF}Ignoring Single/EP/VA: {meta.get("title", "n/a")}')
-            return
+            return {
+                "status": "skipped",
+                "downloaded": 0,
+                "skipped": 0,
+                "failed": 0,
+                "move_errors": 0,
+            }
 
         album_title = _get_title(meta)
 
@@ -499,7 +503,13 @@ class Download:
             logger.info(
                 f"{OFF}Skipping {album_title} as it doesn't meet quality requirement"
             )
-            return
+            return {
+                "status": "skipped",
+                "downloaded": 0,
+                "skipped": 0,
+                "failed": 0,
+                "move_errors": 0,
+            }
 
         tracks = meta["tracks"]["items"]
         track_count = len(tracks)
@@ -615,6 +625,24 @@ class Download:
             summary_parts.append(f"{RED}✗ {promotion_failures} move errors")
         logger.info("  ".join(summary_parts) + RESET if summary_parts else f"{GREEN}Completed")
 
+        failed_total = fa + promotion_failures
+        if failed_total:
+            status = "failed"
+        elif sk:
+            status = "partial"
+        elif dl:
+            status = "completed"
+        else:
+            status = "skipped"
+
+        return {
+            "status": status,
+            "downloaded": dl,
+            "skipped": sk,
+            "failed": fa,
+            "move_errors": promotion_failures,
+        }
+
     def _download_tracks_sequential(
         self,
         tracks,
@@ -633,13 +661,15 @@ class Download:
                 )
                 if "sample" not in parse and parse.get("sampling_rate"):
                     is_mp3 = True if int(actual_q) == 5 else False
-                    self._download_and_tag(
+                    track_status = self._download_and_tag(
                         dirn, count, parse, i, meta, False, is_mp3,
                         i["media_number"] if is_multiple else None,
                         work_root_base=work_album_dir,
                         defer_promotion=defer_promotion,
                     )
-                    stats["downloaded"] += 1
+                    if track_status not in stats:
+                        track_status = "failed"
+                    stats[track_status] += 1
                 else:
                     reason = _describe_restrictions(parse)
                     title = i.get("title", f"track {i.get('id', '?')}")
@@ -747,7 +777,7 @@ class Download:
 
                 if "sample" not in parse and parse.get("sampling_rate"):
                     is_mp3 = True if int(actual_q) == 5 else False
-                    self._download_and_tag(
+                    return self._download_and_tag(
                         dirn, count, parse, i, meta, False, is_mp3,
                         i["media_number"] if is_multiple else None,
                         position=slot_position,
@@ -755,7 +785,6 @@ class Download:
                         work_root_base=work_album_dir,
                         defer_promotion=defer_promotion,
                     )
-                    return "downloaded"
                 else:
                     reason = _describe_restrictions(parse)
                     title = i.get("title", f"track {i.get('id', '?')}")
@@ -833,7 +862,13 @@ class Download:
                     f"{OFF}Skipping {track_title} as it doesn't "
                     "meet quality requirement"
                 )
-                return
+                return {
+                    "status": "skipped",
+                    "downloaded": 0,
+                    "skipped": 1,
+                    "failed": 0,
+                    "move_errors": 0,
+                }
             track_attr = self._get_track_attr(
                 meta, track_title, bit_depth, sampling_rate
             )
@@ -850,7 +885,7 @@ class Download:
                     og_quality=self.cover_og_quality,
                 )
             is_mp3 = True if int(actual_q) == 5 else False
-            self._download_and_tag(
+            track_status = self._download_and_tag(
                 dirn,
                 1,
                 parse,
@@ -860,10 +895,40 @@ class Download:
                 is_mp3,
                 False,
             )
+            if track_status == "failed":
+                return {
+                    "status": "failed",
+                    "downloaded": 0,
+                    "skipped": 0,
+                    "failed": 1,
+                    "move_errors": 0,
+                }
+            if track_status == "skipped":
+                return {
+                    "status": "skipped",
+                    "downloaded": 0,
+                    "skipped": 1,
+                    "failed": 0,
+                    "move_errors": 0,
+                }
         else:
             reason = _describe_restrictions(parse)
             logger.info(f"{OFF}Skipping track {self.item_id}: {reason}")
+            return {
+                "status": "skipped",
+                "downloaded": 0,
+                "skipped": 1,
+                "failed": 0,
+                "move_errors": 0,
+            }
         logger.info(f"{GREEN}Completed")
+        return {
+            "status": "completed",
+            "downloaded": 1,
+            "skipped": 0,
+            "failed": 0,
+            "move_errors": 0,
+        }
 
     def _download_and_tag(
         self,
@@ -884,7 +949,7 @@ class Download:
 
         if "url" not in track_url_dict and "url_template" not in track_url_dict:
             logger.info(f"{OFF}Track not available for download")
-            return
+            return "skipped"
 
         final_root_dir = root_dir
         if multiple:
@@ -923,13 +988,15 @@ class Download:
             # Audio files should be at least 10KB; smaller means corrupt/incomplete
             if file_size > 10240:
                 logger.info(f"{OFF}{track_title} was already downloaded")
-                return
+                return "downloaded"
             else:
                 logger.info(
                     f"{YELLOW}{track_title} exists but looks incomplete "
                     f"({file_size} bytes), re-downloading"
                 )
                 os.remove(final_file)
+
+        processing_error = {"value": False}
 
         # Clean up any orphaned tmp file from a previous interrupted download
         if os.path.isfile(filename):
@@ -1005,6 +1072,7 @@ class Download:
                     timeout=60,
                 )
                 if result.returncode != 0:
+                    processing_error["value"] = True
                     logger.warning(
                         f"{YELLOW}FLAC integrity check failed for '{track_title}'. "
                         "File may be corrupt."
@@ -1029,6 +1097,7 @@ class Download:
                     self.embed_art,
                 )
             except Exception as e:
+                processing_error["value"] = True
                 logger.error(f"{RED}Error tagging the file: {e}", exc_info=True)
 
         def _run_promotion():
@@ -1039,6 +1108,7 @@ class Download:
             try:
                 self._promote_from_staging(staged_final_file, final_file)
             except Exception as e:
+                processing_error["value"] = True
                 logger.error(
                     f"{RED}Error moving the file to destination: {e}",
                     exc_info=True,
@@ -1094,6 +1164,8 @@ class Download:
             _run_integrity_check()
             _run_tagging()
             _run_promotion()
+
+        return "failed" if processing_error["value"] else "downloaded"
 
     @staticmethod
     def _get_filename_attr(artist, track_metadata, track_title):

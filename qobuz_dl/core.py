@@ -51,6 +51,12 @@ def _format_qobuz_api_reason(exc: QobuzApiError) -> str:
     return " | ".join(details)
 
 
+def _should_record_download(outcome: dict) -> bool:
+    if not isinstance(outcome, dict):
+        return False
+    return outcome.get("status") == "completed"
+
+
 class QobuzDL:
     def __init__(
         self,
@@ -173,8 +179,18 @@ class QobuzDL:
                 staging_directory=self.staging_directory,
             )
             dloader.concurrent_downloads = self.concurrent_downloads
-            dloader.download_id_by_type(not album)
-            handle_download_id(self.downloads_db, item_id, add_id=True)
+            outcome = dloader.download_id_by_type(not album)
+            if _should_record_download(outcome):
+                handle_download_id(self.downloads_db, item_id, add_id=True)
+            else:
+                status = outcome.get("status", "unknown") if isinstance(outcome, dict) else "unknown"
+                failed = outcome.get("failed", 0) if isinstance(outcome, dict) else 0
+                move_errors = outcome.get("move_errors", 0) if isinstance(outcome, dict) else 0
+                skipped = outcome.get("skipped", 0) if isinstance(outcome, dict) else 0
+                logger.warning(
+                    f"{YELLOW}Not recording {item_kind} ID {item_id} in database "
+                    f"(status={status}, failed={failed}, move_errors={move_errors}, skipped={skipped})."
+                )
         except QobuzApiError as exc:
             logger.error(
                 f"{RED}Skipping {item_kind} {item_id}: "
@@ -182,6 +198,11 @@ class QobuzDL:
             )
         except (requests.exceptions.RequestException, NonStreamable) as e:
             logger.error(f"{RED}Error getting release: {e}. Skipping...")
+        except Exception as e:
+            logger.error(
+                f"{RED}Unexpected error while downloading {item_kind} {item_id}: {e}",
+                exc_info=True,
+            )
 
     def handle_url(self, url):
         possibles = {
