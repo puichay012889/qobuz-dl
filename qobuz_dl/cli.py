@@ -12,7 +12,7 @@ from qobuz_dl.bundle import Bundle
 from qobuz_dl.color import GREEN, RED, YELLOW
 from qobuz_dl.commands import qobuz_dl_args
 from qobuz_dl.core import QobuzDL
-from qobuz_dl.downloader import DEFAULT_FOLDER, DEFAULT_TRACK
+from qobuz_dl.downloader import DEFAULT_FOLDER, DEFAULT_TRACK, DEFAULT_STAGING
 from qobuz_dl.exceptions import InvalidAppSecretError
 
 logger = logging.getLogger(__name__)
@@ -118,6 +118,11 @@ def _reset_config(config_file, use_token=False):
             "# Where to save downloaded files (absolute or relative path)\n"
             f"default_folder = {default_folder}\n"
             "\n"
+            "# Temporary processing directory before moving files to destination\n"
+            "# Use 'auto' to process on Linux storage when output is under /mnt/*\n"
+            "# Set to 'off' to disable staging\n"
+            "staging_dir = auto\n"
+            "\n"
             "# Audio quality: 5=MP3 320, 6=FLAC 16-bit, 7=FLAC 24-bit≤96kHz,\n"
             "# 27=FLAC 24-bit >96kHz (Hi-Res)\n"
             f"default_quality = {default_quality}\n"
@@ -207,12 +212,36 @@ def _reset_config(config_file, use_token=False):
 
 
 def _remove_leftovers(directory):
-    directory = os.path.join(directory, "**", ".*.tmp")
-    for i in glob.glob(directory, recursive=True):
+    if not directory:
+        return
+
+    base_dir = os.path.abspath(os.path.expanduser(directory))
+    if not os.path.isdir(base_dir):
+        return
+
+    pattern = os.path.join(base_dir, "**", ".*.tmp")
+    for i in glob.glob(pattern, recursive=True):
         try:
             os.remove(i)
         except:  # noqa
             pass
+
+
+def _resolve_staging_cleanup_dir(staging_setting):
+    value = str(staging_setting or "").strip()
+    if not value:
+        return None
+
+    normalized = value.lower()
+    if normalized in {"0", "off", "none", "false", "disabled"}:
+        return None
+
+    if normalized == DEFAULT_STAGING:
+        if os.name == "nt":
+            return None
+        return os.path.join(os.path.expanduser("~"), ".cache", "qobuz-dl", "staging")
+
+    return os.path.abspath(os.path.expanduser(value))
 
 
 def _handle_commands(qobuz, arguments):
@@ -238,6 +267,9 @@ def _handle_commands(qobuz, arguments):
 
     finally:
         _remove_leftovers(qobuz.directory)
+        _remove_leftovers(
+            _resolve_staging_cleanup_dir(getattr(qobuz, "staging_directory", ""))
+        )
 
 
 def _initial_checks():
@@ -290,6 +322,13 @@ def main():
     config = configparser.ConfigParser()
     config.read(CONFIG_FILE)
 
+    # Defaults used if config parsing fails and parser falls back.
+    cfg_workers = "0"
+    cfg_limit_rate = ""
+    cfg_staging_dir = DEFAULT_STAGING
+    cfg_lucky_type = "album"
+    cfg_lucky_number = "1"
+
     try:
         email = config["DEFAULT"].get("email", "")
         password = config["DEFAULT"].get("password", "")
@@ -311,6 +350,7 @@ def main():
         track_format = config["DEFAULT"]["track_format"]
         cfg_workers = config["DEFAULT"].get("workers", "0")
         cfg_limit_rate = config["DEFAULT"].get("limit_rate", "")
+        cfg_staging_dir = config["DEFAULT"].get("staging_dir", DEFAULT_STAGING)
         cfg_lucky_type = config["DEFAULT"].get("lucky_type", "album")
         cfg_lucky_number = config["DEFAULT"].get("lucky_number", "1")
 
@@ -351,6 +391,7 @@ def main():
             default_quality, default_limit, default_folder,
             default_lucky_type=cfg_lucky_type,
             default_lucky_number=int(cfg_lucky_number),
+            default_staging_dir=cfg_staging_dir,
         )
         if len(sys.argv) < 2:
             sys.exit(parser.print_help())
@@ -412,6 +453,7 @@ def main():
         track_format=arguments.track_format or track_format,
         smart_discography=arguments.smart_discography or smart_discography,
         concurrent_downloads=getattr(arguments, "workers", None) or int(cfg_workers),
+        staging_directory=getattr(arguments, "staging_dir", cfg_staging_dir),
     )
 
     # Apply download speed limit: CLI flag overrides config

@@ -83,7 +83,12 @@ def oauth_args(subparsers):
     return oauth
 
 
-def add_common_arg(custom_parser, default_folder, default_quality):
+def add_common_arg(
+    custom_parser,
+    default_folder,
+    default_quality,
+    default_staging_dir="auto",
+):
     custom_parser.add_argument(
         "-d",
         "--directory",
@@ -99,6 +104,16 @@ def add_common_arg(custom_parser, default_folder, default_quality):
         help=(
             'audio "quality" (5, 6, 7, 27)\n'
             f"[320, LOSSLESS, 24B<=96KHZ, 24B>96KHZ] (default: {default_quality})"
+        ),
+    )
+    custom_parser.add_argument(
+        "--staging-dir",
+        metavar="PATH|auto|off",
+        default=default_staging_dir,
+        help=(
+            "temporary working directory before moving files to destination "
+            f"(default: {default_staging_dir}). "
+            "Use 'auto' for /mnt/* destinations on Linux, or 'off' to disable."
         ),
     )
     custom_parser.add_argument(
@@ -160,6 +175,7 @@ def add_common_arg(custom_parser, default_folder, default_quality):
 def qobuz_dl_args(
     default_quality=6, default_limit=20, default_folder="Qobuz Downloads",
     default_lucky_type="album", default_lucky_number=1,
+    default_staging_dir="auto",
 ):
     parser = argparse.ArgumentParser(
         prog="qobuz-dl",
@@ -211,7 +227,7 @@ def qobuz_dl_args(
     lucky = lucky_args(subparsers, default_lucky_type, default_lucky_number)
     oauth = oauth_args(subparsers)
     [
-        add_common_arg(i, default_folder, default_quality)
+        add_common_arg(i, default_folder, default_quality, default_staging_dir)
         for i in (interactive, download, lucky, oauth)
     ]
 

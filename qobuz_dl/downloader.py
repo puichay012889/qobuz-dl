@@ -1,3 +1,5 @@
+import errno
+import hashlib
 import logging
 import os
 import shutil
@@ -33,8 +35,19 @@ DEFAULT_FORMATS = {
 
 DEFAULT_FOLDER = "{albumartist}/{album} ({year}) [{bit_depth}B-{sampling_rate}kHz]"
 DEFAULT_TRACK = "{tracknumber} - {tracktitle}"
+DEFAULT_STAGING = "auto"
 
 logger = logging.getLogger(__name__)
+
+_AUTO_STAGING_ROOT = os.path.join(
+    os.path.expanduser("~"),
+    ".cache",
+    "qobuz-dl",
+    "staging",
+)
+_STAGING_DISABLED_VALUES = {"", "0", "off", "none", "false", "disabled"}
+_STAGING_MOVE_RETRIES = 6
+_STAGING_MOVE_DELAY = 0.35
 
 # Module-level download speed limit in bytes/sec.  0 = unlimited.
 # Set by cli.py from --limit-rate flag.
@@ -106,6 +119,29 @@ def _describe_restrictions(track_url_dict):
         )
 
     return "; ".join(reasons)
+
+
+def _is_windows_mount(path: str) -> bool:
+    if os.name == "nt":
+        return False
+    return os.path.abspath(path).startswith("/mnt/")
+
+
+def _normalize_staging_setting(value) -> str:
+    if value is None:
+        return DEFAULT_STAGING
+
+    normalized = str(value).strip()
+    if not normalized:
+        return DEFAULT_STAGING
+
+    normalized_lower = normalized.lower()
+    if normalized_lower in _STAGING_DISABLED_VALUES:
+        return ""
+    if normalized_lower == DEFAULT_STAGING:
+        return DEFAULT_STAGING
+
+    return os.path.abspath(os.path.expanduser(normalized))
 
 
 def _ellipsis_middle(text: str, max_len: int) -> str:
@@ -266,6 +302,7 @@ class Download:
         track_format=None,
         show_master_progress: bool = True,
         prefetched_meta=None,
+        staging_directory=DEFAULT_STAGING,
     ):
         self.client = client
         self.item_id = item_id
@@ -282,6 +319,108 @@ class Download:
         self.prefetched_meta = prefetched_meta
         self.concurrent_downloads = 1  # set by caller; > 1 enables parallel mode
         self._count_lock = threading.Lock()  # protects the tmp-file counter
+        self.staging_directory = _normalize_staging_setting(staging_directory)
+        self._staging_notice_emitted = False
+
+    def _get_staging_root_for(self, final_root_dir: str) -> Optional[str]:
+        setting = self.staging_directory
+        if not setting:
+            return None
+
+        if setting == DEFAULT_STAGING:
+            if not _is_windows_mount(final_root_dir):
+                return None
+            staging_root = _AUTO_STAGING_ROOT
+        else:
+            staging_root = setting
+
+        os.makedirs(staging_root, exist_ok=True)
+        if not self._staging_notice_emitted:
+            logger.info(
+                f"{CYAN}Processing files in Linux staging dir: {staging_root}{RESET}"
+            )
+            self._staging_notice_emitted = True
+        return staging_root
+
+    def _resolve_work_root(self, final_root_dir: str) -> Tuple[str, bool]:
+        staging_root = self._get_staging_root_for(final_root_dir)
+        if not staging_root:
+            return final_root_dir, False
+
+        stage_key = hashlib.sha1(final_root_dir.encode("utf-8")).hexdigest()[:12]
+        leaf_name = sanitize_filename(os.path.basename(final_root_dir)) or "release"
+        work_root = os.path.join(staging_root, f"{leaf_name}-{stage_key}")
+        os.makedirs(work_root, exist_ok=True)
+        return work_root, True
+
+    @staticmethod
+    def _clear_directory(path: str) -> None:
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+        os.makedirs(path, exist_ok=True)
+
+    @staticmethod
+    def _promote_from_staging(staged_path: str, final_path: str) -> None:
+        os.makedirs(os.path.dirname(final_path), exist_ok=True)
+        last_error = None
+
+        for attempt in range(1, _STAGING_MOVE_RETRIES + 1):
+            try:
+                if os.path.isfile(final_path):
+                    os.remove(final_path)
+                shutil.move(staged_path, final_path)
+                return
+            except PermissionError as exc:
+                last_error = exc
+            except OSError as exc:
+                last_error = exc
+                if exc.errno not in (errno.EACCES, errno.EPERM, errno.EBUSY):
+                    break
+
+            if attempt < _STAGING_MOVE_RETRIES:
+                time.sleep(_STAGING_MOVE_DELAY * attempt)
+
+        if last_error:
+            raise last_error
+
+    def _promote_release_tree(
+        self,
+        staged_release_dir: str,
+        final_release_dir: str,
+    ) -> Tuple[int, int]:
+        if not os.path.isdir(staged_release_dir):
+            return 0, 0
+
+        moved = 0
+        failed = 0
+        for current_dir, _, files in os.walk(staged_release_dir):
+            rel_dir = os.path.relpath(current_dir, staged_release_dir)
+            target_dir = (
+                final_release_dir
+                if rel_dir == "."
+                else os.path.join(final_release_dir, rel_dir)
+            )
+            for name in files:
+                staged_path = os.path.join(current_dir, name)
+                final_path = os.path.join(target_dir, name)
+                try:
+                    self._promote_from_staging(staged_path, final_path)
+                    moved += 1
+                except Exception as exc:
+                    failed += 1
+                    logger.error(
+                        f"{RED}Error moving '{name}' to destination: {exc}",
+                        exc_info=True,
+                    )
+
+        for current_dir, _, _ in os.walk(staged_release_dir, topdown=False):
+            try:
+                if not os.listdir(current_dir):
+                    os.rmdir(current_dir)
+            except OSError:
+                pass
+
+        return moved, failed
 
     def _get_track_url_with_fallback(self, track_id, fmt_id):
         """Try *fmt_id* first; if format-restricted AND quality_fallback is
@@ -399,14 +538,25 @@ class Download:
         dirn = os.path.join(self.path, sanitized_title)
         os.makedirs(dirn, exist_ok=True)
 
+        work_album_dir, using_release_staging = self._resolve_work_root(dirn)
+        if using_release_staging:
+            # Ensure a clean staging tree so stale files from older runs are not promoted.
+            self._clear_directory(work_album_dir)
+
+        assets_dir = work_album_dir if using_release_staging else dirn
+
         if self.no_cover:
             logger.info(f"{OFF}Skipping cover")
         else:
-            _get_extra(meta["image"]["large"], dirn, og_quality=self.cover_og_quality)
+            _get_extra(
+                meta["image"]["large"],
+                assets_dir,
+                og_quality=self.cover_og_quality,
+            )
 
         if "goodies" in meta:
             try:
-                _get_extra(meta["goodies"][0]["url"], dirn, "booklet.pdf")
+                _get_extra(meta["goodies"][0]["url"], assets_dir, "booklet.pdf")
             except:  # noqa
                 pass
         media_numbers = [track["media_number"] for track in meta["tracks"]["items"]]
@@ -415,9 +565,38 @@ class Download:
 
 
         if max_workers > 1:
-            stats = self._download_tracks_parallel(tracks, dirn, meta, is_multiple, max_workers)
+            stats = self._download_tracks_parallel(
+                tracks,
+                dirn,
+                meta,
+                is_multiple,
+                max_workers,
+                work_album_dir=work_album_dir,
+                defer_promotion=using_release_staging,
+            )
         else:
-            stats = self._download_tracks_sequential(tracks, dirn, meta, is_multiple)
+            stats = self._download_tracks_sequential(
+                tracks,
+                dirn,
+                meta,
+                is_multiple,
+                work_album_dir=work_album_dir,
+                defer_promotion=using_release_staging,
+            )
+
+        moved_files = 0
+        promotion_failures = 0
+        if using_release_staging:
+            logger.info(f"{CYAN}Finalizing album files...{RESET}")
+            moved_files, promotion_failures = self._promote_release_tree(
+                work_album_dir,
+                dirn,
+            )
+            if promotion_failures:
+                logger.warning(
+                    f"{YELLOW}Album finalization completed with "
+                    f"{promotion_failures} move error(s)."
+                )
 
         # Print summary
         dl = stats.get("downloaded", 0)
@@ -430,9 +609,21 @@ class Download:
             summary_parts.append(f"{YELLOW}⚠ {sk} skipped")
         if fa:
             summary_parts.append(f"{RED}✗ {fa} failed")
+        if moved_files:
+            summary_parts.append(f"{CYAN}↷ {moved_files} moved")
+        if promotion_failures:
+            summary_parts.append(f"{RED}✗ {promotion_failures} move errors")
         logger.info("  ".join(summary_parts) + RESET if summary_parts else f"{GREEN}Completed")
 
-    def _download_tracks_sequential(self, tracks, dirn, meta, is_multiple):
+    def _download_tracks_sequential(
+        self,
+        tracks,
+        dirn,
+        meta,
+        is_multiple,
+        work_album_dir=None,
+        defer_promotion=False,
+    ):
         """Original one-at-a-time download loop. Returns stats dict."""
         stats = {"downloaded": 0, "skipped": 0, "failed": 0}
         for count, i in enumerate(tracks):
@@ -445,6 +636,8 @@ class Download:
                     self._download_and_tag(
                         dirn, count, parse, i, meta, False, is_mp3,
                         i["media_number"] if is_multiple else None,
+                        work_root_base=work_album_dir,
+                        defer_promotion=defer_promotion,
                     )
                     stats["downloaded"] += 1
                 else:
@@ -458,7 +651,16 @@ class Download:
                 stats["failed"] += 1
         return stats
 
-    def _download_tracks_parallel(self, tracks, dirn, meta, is_multiple, max_workers):
+    def _download_tracks_parallel(
+        self,
+        tracks,
+        dirn,
+        meta,
+        is_multiple,
+        max_workers,
+        work_album_dir=None,
+        defer_promotion=False,
+    ):
         """Parallel download using ThreadPoolExecutor. Returns stats dict."""
         counter = [0]  # mutable container for atomic-style increment
         stats = {"downloaded": 0, "skipped": 0, "failed": 0}
@@ -550,6 +752,8 @@ class Download:
                         i["media_number"] if is_multiple else None,
                         position=slot_position,
                         leave=False,
+                        work_root_base=work_album_dir,
+                        defer_promotion=defer_promotion,
                     )
                     return "downloaded"
                 else:
@@ -673,6 +877,8 @@ class Download:
         multiple=None,
         position: Optional[int] = None,
         leave: bool = True,
+        work_root_base: Optional[str] = None,
+        defer_promotion: bool = False,
     ):
         extension = ".mp3" if is_mp3 else ".flac"
 
@@ -680,11 +886,24 @@ class Download:
             logger.info(f"{OFF}Track not available for download")
             return
 
+        final_root_dir = root_dir
         if multiple:
-            root_dir = os.path.join(root_dir, f"Disc {multiple}")
-            os.makedirs(root_dir, exist_ok=True)
+            final_root_dir = os.path.join(root_dir, f"Disc {multiple}")
+            os.makedirs(final_root_dir, exist_ok=True)
 
-        filename = os.path.join(root_dir, f".{tmp_count:02}.tmp")
+        if work_root_base:
+            work_root_dir = (
+                os.path.join(work_root_base, f"Disc {multiple}")
+                if multiple else work_root_base
+            )
+            os.makedirs(work_root_dir, exist_ok=True)
+            using_staging = os.path.abspath(work_root_dir) != os.path.abspath(
+                final_root_dir
+            )
+        else:
+            work_root_dir, using_staging = self._resolve_work_root(final_root_dir)
+
+        filename = os.path.join(work_root_dir, f".{tmp_count:02}.tmp")
 
         # Determine the filename
         track_title = track_metadata.get("title")
@@ -694,7 +913,10 @@ class Download:
         # track_format is a format string
         # e.g. '{tracknumber}. {artist} - {tracktitle}'
         formatted_path = sanitize_filename(self.track_format.format(**filename_attr))
-        final_file = os.path.join(root_dir, formatted_path)[:250] + extension
+        final_file = os.path.join(final_root_dir, formatted_path)[:250] + extension
+        staged_final_file = (
+            os.path.join(work_root_dir, formatted_path)[:250] + extension
+        )
 
         if os.path.isfile(final_file):
             file_size = os.path.getsize(final_file)
@@ -799,8 +1021,8 @@ class Download:
             try:
                 tag_function(
                     filename,
-                    root_dir,
-                    final_file,
+                    work_root_dir,
+                    staged_final_file,
                     track_metadata,
                     album_or_track_metadata,
                     is_track,
@@ -809,11 +1031,29 @@ class Download:
             except Exception as e:
                 logger.error(f"{RED}Error tagging the file: {e}", exc_info=True)
 
+        def _run_promotion():
+            if defer_promotion:
+                return
+            if not using_staging or not os.path.isfile(staged_final_file):
+                return
+            try:
+                self._promote_from_staging(staged_final_file, final_file)
+            except Exception as e:
+                logger.error(
+                    f"{RED}Error moving the file to destination: {e}",
+                    exc_info=True,
+                )
+
         show_postprocess_status = position is not None and not leave
         if show_postprocess_status:
-            post_steps = ["tagging"] if is_mp3 else ["verifying", "tagging"]
+            post_steps = []
+            if not is_mp3:
+                post_steps.append("verifying")
+            post_steps.append("tagging")
+            if using_staging and not defer_promotion:
+                post_steps.append("moving")
             current_status = post_steps[0]
-            initial_post_color = GREEN if is_mp3 else YELLOW
+            initial_post_color = GREEN if current_status == "tagging" else YELLOW
             with tqdm(
                 total=len(post_steps),
                 desc=dl_desc,
@@ -840,9 +1080,20 @@ class Download:
                     post_bar.refresh()
                 _run_tagging()
                 post_bar.update(1)
+                if using_staging and not defer_promotion:
+                    current_status = "moving"
+                    post_bar.bar_format = _build_postprocess_bar_format(
+                        compact_ui,
+                        CYAN,
+                        current_status,
+                    )
+                    post_bar.refresh()
+                    _run_promotion()
+                    post_bar.update(1)
         else:
             _run_integrity_check()
             _run_tagging()
+            _run_promotion()
 
     @staticmethod
     def _get_filename_attr(artist, track_metadata, track_title):

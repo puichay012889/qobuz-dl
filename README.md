@@ -143,6 +143,11 @@ Download with 3 parallel workers and speed limit:
 qobuz-dl dl https://play.qobuz.com/album/qxjbxh1dc3xyb -w 3 --limit-rate 5M
 ```
 
+Download to a Windows drive from WSL using Linux staging (recommended):
+```bash
+qobuz-dl dl https://play.qobuz.com/album/qxjbxh1dc3xyb -d "/mnt/c/Users/<you>/Music/Qobuz" --staging-dir auto
+```
+
 Download multiple URLs to a custom directory:
 ```bash
 qobuz-dl dl https://play.qobuz.com/artist/2038380 https://play.qobuz.com/album/ip8qjy1m6dakc -d "Some pop from 2020"
@@ -216,11 +221,14 @@ All CLI flags can be set as persistent defaults in the config file (`~/.config/q
 
 Run `qobuz-dl -sc` to view your current config, or `qobuz-dl -r` to regenerate it with the interactive wizard.
 
+With `staging_dir = auto`, Linux builds will process tracks in `~/.cache/qobuz-dl/staging` when the destination is under `/mnt/*`, then move the finalized album to the target directory in one finalization pass.
+
 ### Config Reference
 
 | Config Key | CLI Flag | Default | Description |
 |---|---|---|---|
 | `default_folder` | `-d` | `Qobuz Downloads` | Download directory |
+| `staging_dir` | `--staging-dir` | `auto` | Temp processing dir before final move (`off` to disable) |
 | `default_quality` | `-q` | `6` | Audio quality (5/6/7/27) |
 | `default_limit` | `-l` | `20` | Search result limit (fun mode) |
 | `folder_format` | `-ff` | `{albumartist}/{album}...` | Album folder naming pattern |

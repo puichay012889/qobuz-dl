@@ -71,6 +71,7 @@ class QobuzDL:
         track_format="{tracknumber} - {tracktitle}",
         smart_discography=False,
         concurrent_downloads=1,
+        staging_directory=downloader.DEFAULT_STAGING,
     ):
         self.directory = create_and_return_dir(directory)
         self.quality = quality
@@ -88,6 +89,7 @@ class QobuzDL:
         self.track_format = track_format
         self.smart_discography = smart_discography
         self.concurrent_downloads = int(concurrent_downloads)
+        self.staging_directory = staging_directory
 
     def initialize_client(self, email, pwd, app_id, secrets):
         self.client = qopy.Client(email, pwd, app_id, secrets)
@@ -168,6 +170,7 @@ class QobuzDL:
                 self.folder_format,
                 self.track_format,
                 prefetched_meta=preflight_meta,
+                staging_directory=self.staging_directory,
             )
             dloader.concurrent_downloads = self.concurrent_downloads
             dloader.download_id_by_type(not album)
