@@ -311,3 +311,4 @@ qobuz_dl/
 - This tool was written for educational purposes. I will not be responsible if you use this program in bad faith. By using it, you are accepting the [Qobuz API Terms of Use](https://static.qobuz.com/apps/api/QobuzAPI-TermsofUse.pdf).
 - `qobuz-dl` is not affiliated with Qobuz.
 
+
